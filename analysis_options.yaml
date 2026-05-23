@@ -1,0 +1,12 @@
+include: package:flutter_lints/flutter.yaml
+
+linter:
+  rules:
+    prefer_const_constructors: true
+    prefer_final_locals: true
+    avoid_print: false # the direct-API stub logs guidance to the console
+
+analyzer:
+  errors:
+    # Keep TODO-driven stub code from blocking analysis.
+    todo: ignore
