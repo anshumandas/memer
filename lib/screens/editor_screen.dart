@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 
 import '../models/callout.dart';
+import '../models/meme_config.dart';
 import '../models/meme_controller.dart';
 import '../services/image_export_service.dart';
 import '../services/media_picker_service.dart';
@@ -31,6 +32,10 @@ class _EditorScreenState extends State<EditorScreen> {
   final TextEditingController _topController = TextEditingController();
   final TextEditingController _bottomController = TextEditingController();
   final TextEditingController _calloutController = TextEditingController();
+  final TextEditingController _headerController = TextEditingController();
+  final TextEditingController _footnoteController = TextEditingController();
+  final TextEditingController _linkUrlController = TextEditingController();
+  final TextEditingController _linkLabelController = TextEditingController();
 
   String? _lastSelectedId;
   bool _busy = false;
@@ -56,6 +61,10 @@ class _EditorScreenState extends State<EditorScreen> {
     _topController.dispose();
     _bottomController.dispose();
     _calloutController.dispose();
+    _headerController.dispose();
+    _footnoteController.dispose();
+    _linkUrlController.dispose();
+    _linkLabelController.dispose();
     super.dispose();
   }
 
@@ -67,6 +76,18 @@ class _EditorScreenState extends State<EditorScreen> {
       _lastSelectedId = id;
       _calloutController.text = _controller.selectedCallout?.text ?? '';
     }
+    _syncIfDifferent(_topController, _controller.config.topText);
+    _syncIfDifferent(_bottomController, _controller.config.bottomText);
+    _syncIfDifferent(_headerController, _controller.config.headerText);
+    _syncIfDifferent(_footnoteController, _controller.config.footnoteText);
+    _syncIfDifferent(_linkUrlController, _controller.config.linkUrl);
+    _syncIfDifferent(_linkLabelController, _controller.config.linkLabel);
+  }
+
+  /// Only writes to a [TextEditingController] when the value really differs,
+  /// to avoid stomping the cursor while the user types.
+  void _syncIfDifferent(TextEditingController c, String value) {
+    if (c.text != value) c.text = value;
   }
 
   // -------------------------------------------------------------- actions
@@ -114,8 +135,13 @@ class _EditorScreenState extends State<EditorScreen> {
 
   String _composeCaption() {
     final List<String> parts = <String>[
+      _controller.config.headerText.trim(),
       _controller.config.topText.trim(),
       _controller.config.bottomText.trim(),
+      _controller.config.footnoteText.trim(),
+      // Append the link so it survives the share (PNGs can't carry a live
+      // hyperlink, but most share targets make URLs in the caption clickable).
+      _controller.config.linkUrl.trim(),
     ].where((String s) => s.isNotEmpty).toList();
     return parts.join(' ');
   }
@@ -330,6 +356,69 @@ class _EditorScreenState extends State<EditorScreen> {
                   ],
                 ),
               ]),
+              _section('Header & footnote', <Widget>[
+                TextField(
+                  controller: _headerController,
+                  decoration: const InputDecoration(
+                    labelText: 'Header (small, top)',
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: _controller.setHeaderText,
+                ),
+                const SizedBox(height: 8),
+                _alignRow(
+                  current: _controller.config.headerAlign,
+                  onChanged: _controller.setHeaderAlign,
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _footnoteController,
+                  decoration: const InputDecoration(
+                    labelText: 'Footnote (small, bottom)',
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: _controller.setFootnoteText,
+                ),
+                const SizedBox(height: 8),
+                _alignRow(
+                  current: _controller.config.footnoteAlign,
+                  onChanged: _controller.setFootnoteAlign,
+                ),
+              ]),
+              _section('Hyperlink', <Widget>[
+                TextField(
+                  controller: _linkUrlController,
+                  decoration: const InputDecoration(
+                    labelText: 'URL (e.g. https://example.com)',
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType: TextInputType.url,
+                  autocorrect: false,
+                  onChanged: _controller.setLinkUrl,
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _linkLabelController,
+                  decoration: const InputDecoration(
+                    labelText: 'Display label (optional)',
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: _controller.setLinkLabel,
+                ),
+                const SizedBox(height: 8),
+                _alignRow(
+                  current: _controller.config.linkAlign,
+                  onChanged: _controller.setLinkAlign,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Tap the link in the preview to open it. Exported PNGs can’t '
+                  'carry a live link, so the URL is also added to the share caption.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                ),
+              ]),
               _section('Background', <Widget>[
                 Row(
                   children: <Widget>[
@@ -537,6 +626,37 @@ class _EditorScreenState extends State<EditorScreen> {
           ...children,
         ],
       ),
+    );
+  }
+
+  Widget _alignRow({
+    required MemeTextAlign current,
+    required ValueChanged<MemeTextAlign> onChanged,
+  }) {
+    return Row(
+      children: <Widget>[
+        Text('Align', style: Theme.of(context).textTheme.bodyMedium),
+        const SizedBox(width: 12),
+        SegmentedButton<MemeTextAlign>(
+          showSelectedIcon: false,
+          segments: const <ButtonSegment<MemeTextAlign>>[
+            ButtonSegment<MemeTextAlign>(
+              value: MemeTextAlign.left,
+              icon: Icon(Icons.format_align_left),
+            ),
+            ButtonSegment<MemeTextAlign>(
+              value: MemeTextAlign.center,
+              icon: Icon(Icons.format_align_center),
+            ),
+            ButtonSegment<MemeTextAlign>(
+              value: MemeTextAlign.right,
+              icon: Icon(Icons.format_align_right),
+            ),
+          ],
+          selected: <MemeTextAlign>{current},
+          onSelectionChanged: (Set<MemeTextAlign> s) => onChanged(s.first),
+        ),
+      ],
     );
   }
 

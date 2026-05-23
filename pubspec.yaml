@@ -25,6 +25,11 @@ dependencies:
   # Pure-Dart HSV/wheel colour picker (works on every platform).
   flutter_colorpicker: ^1.1.0
 
+  # Cross-platform URL opener for the meme's optional clickable hyperlink
+  # (works in the editor preview — the exported PNG of course can't carry
+  # a live link, so the URL is also appended to the share caption).
+  url_launcher: ^6.3.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

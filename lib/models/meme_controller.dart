@@ -64,6 +64,43 @@ class MemeController extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ---- header / footnote / link ----------------------------------------
+
+  void setHeaderText(String value) {
+    _config = _config.copyWith(headerText: value);
+    notifyListeners();
+  }
+
+  void setHeaderAlign(MemeTextAlign align) {
+    _config = _config.copyWith(headerAlign: align);
+    notifyListeners();
+  }
+
+  void setFootnoteText(String value) {
+    _config = _config.copyWith(footnoteText: value);
+    notifyListeners();
+  }
+
+  void setFootnoteAlign(MemeTextAlign align) {
+    _config = _config.copyWith(footnoteAlign: align);
+    notifyListeners();
+  }
+
+  void setLinkUrl(String value) {
+    _config = _config.copyWith(linkUrl: value);
+    notifyListeners();
+  }
+
+  void setLinkLabel(String value) {
+    _config = _config.copyWith(linkLabel: value);
+    notifyListeners();
+  }
+
+  void setLinkAlign(MemeTextAlign align) {
+    _config = _config.copyWith(linkAlign: align);
+    notifyListeners();
+  }
+
   // ---- callouts ---------------------------------------------------------
 
   /// Adds a new callout near the centre and selects it. Returns its id.

@@ -98,5 +98,34 @@ void main() {
       expect(controller.config.bottomText, 'bye');
       expect(controller.config.backgroundColor, const Color(0xFF00FF00));
     });
+
+    test('header, footnote and link round-trip through the controller', () {
+      final MemeController controller = MemeController();
+      controller.setHeaderText('via @anshu');
+      controller.setHeaderAlign(MemeTextAlign.left);
+      controller.setFootnoteText('made with memer');
+      controller.setFootnoteAlign(MemeTextAlign.right);
+      controller.setLinkUrl('https://example.com');
+      controller.setLinkLabel('see more');
+      controller.setLinkAlign(MemeTextAlign.right);
+
+      expect(controller.config.headerText, 'via @anshu');
+      expect(controller.config.headerAlign, MemeTextAlign.left);
+      expect(controller.config.footnoteText, 'made with memer');
+      expect(controller.config.footnoteAlign, MemeTextAlign.right);
+      expect(controller.config.linkUrl, 'https://example.com');
+      expect(controller.config.linkLabel, 'see more');
+      expect(controller.config.linkAlign, MemeTextAlign.right);
+
+      expect(controller.config.hasHeader, isTrue);
+      expect(controller.config.hasFootnote, isTrue);
+      expect(controller.config.hasLink, isTrue);
+      expect(controller.config.linkDisplay, 'see more');
+    });
+
+    test('linkDisplay falls back to the URL when the label is blank', () {
+      const MemeConfig config = MemeConfig(linkUrl: 'https://example.com');
+      expect(config.linkDisplay, 'https://example.com');
+    });
   });
 }
