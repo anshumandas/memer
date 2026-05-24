@@ -1,45 +1,67 @@
 # memer
 
-A **client-only** Flutter app for making simple memes and posting them to your
-social networks. There is **no backend server** — the app renders your meme on
-the device and hands it to your operating system's native share sheet, so you
-post through apps you're *already* logged into (Instagram, X, WhatsApp,
-Facebook, Messages, email, …).
+A **client-only** Flutter app for making memes by stacking layers and posting
+them to your social networks. There is **no backend server** today — the app
+renders your meme on the device and hands the PNG to your operating system's
+native share sheet, so you post through apps you're *already* logged into
+(Instagram, X, WhatsApp, Facebook, Messages, email, …).
 
 Project location: `C:/workspace/memer`.
 
-## Features
+## What you can do
 
-- Solid **background colour** picker.
-- Optional **background image** (loaded from disk/gallery, kept in memory).
-- Classic **top / bottom captions** with an automatic contrasting outline.
-- Optional **speech-bubble callouts** you can drag around, recolour, resize and
-  point in any direction.
+- Start from a solid **background colour** layer.
+- Stack any combination of:
+  - **Text** layers (font, size, colour, bold, italics, optional outline).
+  - **Hyperlink** layers (underlined text + a "copy link" button — the URL
+    is also appended to the share caption since PNGs can't carry live links).
+  - **Image** layers (drag-resize on the canvas; crop / free-rotate /
+    background removal arrive in Phase 2).
+  - **Callout bubble** layers in six shapes (round-speech, sharp-speech,
+    thought-cloud, rectangle, oval, scallop). Drag the small handle to
+    re-aim the tail.
+- Drag any layer around. Use corner handles to resize, the top handle to
+  rotate, and the opacity slider in the inspector for transparency.
+- Reorder z-order by dragging rows in the Layers panel. Toggle visibility
+  and lock per layer.
+- Pick a canvas aspect ratio (1:1, 4:5, 9:16, 16:9, 3:4).
+- **Save image…** to export a PNG (or download it, on web).
 - One-tap **share** to any installed app via the native share sheet.
-- **Save image…** to export a PNG to disk (or download it, on web).
 - Runs on **Android, iOS, web, Windows, macOS and Linux** from one codebase.
 
-## Why no direct "post to API" buttons by default?
+## Roadmap
+
+- **Phase 2 — image tools.** Crop, free-rotate (with a degrees field), and a
+  manual "remove background" painter (brush + magic-wand). On apply, the
+  modified alpha is baked into the layer; the original bytes are preserved
+  so you can re-open the masker losslessly.
+- **Phase 3 — multi-account posting.** Connect X, Instagram, Facebook,
+  Threads and LinkedIn accounts. OAuth tokens live in
+  `flutter_secure_storage` on-device. CLAUDE.md forbids embedding secrets,
+  so you bring your own developer credentials per network — paste a client
+  ID once in Settings and you're connected. Share screen then lets you tick
+  multiple accounts and post in parallel.
+
+## Why no direct "post to API" buttons today?
 
 This uses a **hybrid** approach:
 
-- **Default path — share sheet (no backend).** The only way to post to the big
-  networks *without* a server. Their APIs require OAuth flows whose token
-  exchange uses a **client secret**, which can't be safely embedded in a
-  client-only app, plus registered redirect URIs and app review.
-- **Extension point — direct API posting.** `lib/services/social/` defines a
-  `SocialPoster` interface. `ShareSheetPoster` is the working implementation;
-  `DirectApiPoster` (with `XApiPoster` / `InstagramApiPoster` stubs) is where
-  to add real API posting *if you ever add a small backend* to hold the secret
-  and complete the OAuth exchange. Dropping in a finished implementation
-  requires **zero UI changes**.
+- **Default path — share sheet (no backend).** The only way to post to the
+  big networks *without* a server. Their APIs require OAuth flows whose
+  token exchange uses a **client secret**, which can't be safely embedded
+  in a client-only app, plus registered redirect URIs and app review.
+- **Extension point — direct API posting.** `lib/services/social/` defines
+  a `SocialPoster` interface. `ShareSheetPoster` is the working
+  implementation; `DirectApiPoster` (with `XApiPoster` / `InstagramApiPoster`
+  stubs) is where Phase 3 will plug in real posters. Because they satisfy
+  the same interface, the UI doesn't change.
 
 ## Getting started
 
-This package ships the application code (`lib/`, `test/`, `pubspec.yaml`) plus
-the Claude Code harness (`CLAUDE.md`, `.claude/`). The machine-generated
-platform folders (`android/`, `ios/`, `web/`, etc.) are not included — generate
-them in one command:
+This package ships the application code (`lib/`, `test/`, `pubspec.yaml`)
+plus the Claude Code harness (`CLAUDE.md`, `.claude/`). The machine-generated
+platform folders (`android/`, `ios/`, `web/`, etc.) are not included —
+generate them in one command:
 
 ```bash
 cd C:/workspace/memer
@@ -80,20 +102,26 @@ memer/
     app.dart                      MaterialApp + theming
     theme/app_theme.dart          Material 3 theme
     models/
-      callout.dart                speech-bubble data model
-      meme_config.dart            immutable snapshot of a meme
-      meme_controller.dart        ChangeNotifier holding live edit state
+      layer.dart                  sealed Layer family + CalloutKind + clamps
+      meme_config.dart            immutable snapshot { aspect, layers }
+      meme_controller.dart        layer ops, selection, ChangeNotifier
     widgets/
-      meme_canvas.dart            the composited meme (also the export source)
-      meme_text.dart              outlined caption text
-      callout_bubble.dart         speech bubble painter
-      draggable_callout.dart      tap-to-select / drag-to-move wrapper
+      meme_canvas.dart            composites every layer (also the export source)
+      selection_overlay.dart      tap/drag/resize/rotate/tail handles
+      layers_panel.dart           reorderable z-order list + add-layer menu
+      inspector_panel.dart        per-layer-kind sub-inspectors
+      layer_renderers/
+        background_renderer.dart
+        text_renderer.dart
+        hyperlink_renderer.dart
+        image_renderer.dart
+        callout_renderer.dart    bubble + dynamic tail painter
     screens/
       home_screen.dart            landing screen
-      editor_screen.dart          the editor (preview + controls + share)
+      editor_screen.dart          3-pane editor (layers | canvas | inspector)
     services/
       image_export_service.dart   RepaintBoundary → PNG, + save
-      media_picker_service.dart   pick a background image (all platforms)
+      media_picker_service.dart   pick an image (all platforms)
       platform_saver_default.dart native "save as" dialog
       platform_saver_web.dart     web download (conditional import)
       social/
@@ -101,7 +129,7 @@ memer/
         share_sheet_poster.dart   native share sheet (the default)
         direct_api_poster.dart    documented stub for API posting
   test/
-    meme_controller_test.dart     unit tests for the models + controller
+    meme_controller_test.dart     unit tests for the layer model + controller
 ```
 
 ## Working on memer with Claude Code
@@ -121,11 +149,12 @@ The repo is set up for [Claude Code](https://docs.claude.com/en/docs/claude-code
 
 ## How the export works
 
-The on-screen preview lives inside a `RepaintBoundary`. When you share or save,
-the app calls `RenderRepaintBoundary.toImage()` and encodes the result as PNG —
-upscaled to ~1080px wide regardless of screen size, so the output is crisp and
-identical to what you see. Because the *same* widget tree is used for preview
-and export, it's truly WYSIWYG.
+The on-screen preview lives inside a `RepaintBoundary`. When you share or
+save, the app calls `RenderRepaintBoundary.toImage()` and encodes the result
+as PNG — upscaled to ~1080px wide regardless of screen size, so the output
+is crisp and identical to what you see. Because the *same* widget tree is
+used for preview and export — and the selection handles are deliberately
+*outside* the boundary — it's truly WYSIWYG.
 
 ## Dependencies
 
@@ -134,12 +163,15 @@ and export, it's truly WYSIWYG.
 | `share_plus`          | Native OS share sheet (post with your own logins).         |
 | `file_selector`       | Cross-platform image picking and "save as" dialog.         |
 | `flutter_colorpicker` | Pure-Dart colour picker that works on every platform.      |
+| `url_launcher`        | Open URLs from the inspector preview.                      |
 
 ## Platform notes
 
 - **Web:** sharing uses the browser Web Share API where available; "Save"
   triggers a normal download. Image export uses the CanvasKit renderer.
-- **Windows / Linux:** native file *sharing* support is limited; if the share
-  sheet is unavailable the app tells you to use **Save image…** instead.
-- **iOS/macOS:** you may need to add a usage description and enable the relevant
-  entitlements for file access — `flutter create .` sets up sensible defaults.
+- **Windows / Linux:** native file *sharing* support is limited; if the
+  share sheet is unavailable the app tells you to use **Save image…**
+  instead.
+- **iOS/macOS:** you may need to add a usage description and enable the
+  relevant entitlements for file access — `flutter create .` sets up
+  sensible defaults.

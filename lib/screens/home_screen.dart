@@ -14,7 +14,7 @@ class HomeScreen extends StatelessWidget {
     return Scaffold(
       body: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 480),
+          constraints: const BoxConstraints(maxWidth: 520),
           child: Padding(
             padding: const EdgeInsets.all(24),
             child: Column(
@@ -29,7 +29,7 @@ class HomeScreen extends StatelessWidget {
                     borderRadius: BorderRadius.circular(28),
                   ),
                   child: Icon(
-                    Icons.add_reaction_outlined,
+                    Icons.layers_outlined,
                     size: 52,
                     color: scheme.onPrimaryContainer,
                   ),
@@ -43,9 +43,10 @@ class HomeScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  'Pick a background colour, drop in text and speech bubbles, '
-                  'add a photo if you like — then share it to any app on your '
-                  'device. Everything happens on-device; no account, no server.',
+                  'Stack layers — background, text, hyperlinks, images and '
+                  'callout bubbles — drag them around, set opacity, and export '
+                  'as a PNG or share to any app on your device. Everything '
+                  'happens on-device.',
                   style:
                       text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                   textAlign: TextAlign.center,
