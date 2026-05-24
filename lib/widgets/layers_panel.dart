@@ -16,6 +16,13 @@ class LayersPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (BuildContext context, _) => _build(context),
+    );
+  }
+
+  Widget _build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
     // Reverse so the visually top layer appears at the top of the list — the
     // model stores bottom-first, but users expect Photoshop-style ordering.

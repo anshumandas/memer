@@ -4,6 +4,7 @@ import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 
 import '../models/layer.dart';
 import '../models/meme_controller.dart';
+import '../screens/image_editor_screen.dart';
 import '../services/media_picker_service.dart';
 
 /// Right-hand panel that shows controls for the currently selected layer.
@@ -16,6 +17,13 @@ class InspectorPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (BuildContext context, _) => _build(context),
+    );
+  }
+
+  Widget _build(BuildContext context) {
     final Layer? layer = controller.selectedLayer;
     if (layer == null) {
       return const _Empty(
@@ -468,6 +476,25 @@ class _ImageInspector extends StatelessWidget {
     );
   }
 
+  Future<void> _openEditor(BuildContext context) async {
+    final Uint8List? edited = await Navigator.of(context).push<Uint8List>(
+      MaterialPageRoute<Uint8List>(
+        fullscreenDialog: true,
+        builder: (_) => ImageEditorScreen(
+          initialBytes: layer.bytes,
+          originalBytes: layer.originalBytes,
+        ),
+      ),
+    );
+    if (edited == null) return;
+    controller.updateLayer(
+      layer.id,
+      // Preserve originalBytes so the user can keep using "Reset to original"
+      // across multiple editor sessions.
+      (Layer l) => (l as ImageLayer).copyWith(bytes: edited),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return _Section(
@@ -478,18 +505,25 @@ class _ImageInspector extends StatelessWidget {
           Row(
             children: <Widget>[
               Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => _replace(context),
-                  icon: const Icon(Icons.image_outlined),
-                  label: const Text('Replace image'),
+                child: FilledButton.icon(
+                  onPressed: () => _openEditor(context),
+                  icon: const Icon(Icons.tune),
+                  label: const Text('Edit image…'),
                 ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: () => _replace(context),
+                icon: const Icon(Icons.image_outlined),
+                label: const Text('Replace'),
               ),
             ],
           ),
           const SizedBox(height: 12),
           Text(
-            'Phase 2 will add crop, free-rotate, and a manual "remove background" '
-            'painter. For now, drag corners to resize and use the rotate handle.',
+            'Editor offers crop, 90° rotate, and a manual remove-background '
+            'painter (brush + magic-wand). Drag corners on the main canvas to '
+            'resize; use the rotate handle for free rotation.',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),

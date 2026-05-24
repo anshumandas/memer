@@ -30,6 +30,11 @@ dependencies:
   # a live link, so the URL is also appended to the share caption).
   url_launcher: ^6.3.0
 
+  # Pure-Dart image processing — crops, bakes rotations, applies the alpha
+  # mask produced by the background-removal painter. Works on every target
+  # (no native plugins, no FFI), so the image tools stay cross-platform.
+  image: ^4.2.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -45,9 +45,13 @@ a sealed family with five variants:
 - `widgets/inspector_panel.dart` — sub-inspectors per layer kind.
 - `services/image_export_service.dart` — `RepaintBoundary`→PNG; conditional
   import (`platform_saver_default.dart` / `platform_saver_web.dart`).
+- `services/image_processing_service.dart` — pure-Dart crop, 90° rotate,
+  flood-fill (magic wand) and bake-erasures into a transparent PNG. Built
+  on the `image` package; runs on every platform.
 - `services/social/` — `SocialPoster` interface; `ShareSheetPoster` (default,
   no backend); `DirectApiPoster` stub (real impls land in Phase 3).
 - `screens/` — `editor_screen.dart` (3-pane: layers | canvas | inspector),
+  `image_editor_screen.dart` (Phase-2 modal: crop / rotate / background-mask),
   `home_screen.dart` (landing).
 
 ## Conventions
@@ -69,12 +73,18 @@ a sealed family with five variants:
 
 ## Roadmap
 
-- **Phase 1 (this commit).** Layer engine, all 5 layer kinds, canvas +
+- **Phase 1 (shipped).** Layer engine, all 5 layer kinds, canvas +
   interactive overlay, layers + inspector panels, OS share sheet posting,
   PNG save/export.
-- **Phase 2.** Image tools — crop, free-rotate (already supported via the
-  generic rotation handle; the inspector will get a degrees field), and the
-  manual background-removal painter (brush + magic-wand → alpha mask).
+- **Phase 2 (shipped).** Image tools (`ImageEditorScreen`): crop with a
+  draggable rect + 4 corner handles, 90° rotations (CW / CCW / 180°), and
+  a manual background-removal painter (brush + magic-wand). Wand uses
+  `ImageProcessingService.floodFill` (BFS, 4-connected, RGB tolerance);
+  brush strokes accumulate as `Path`s in image-pixel coordinates and are
+  baked into a transparent PNG via `applyErasures` (drawn with
+  `BlendMode.dstOut` so the underlying image pixels become transparent).
+  Free rotation at arbitrary angles continues to live on the canvas via
+  the rotate handle — image-editor rotation is just the 90° quick path.
 - **Phase 3.** BYO-credentials social posting — `flutter_secure_storage` for
   accounts/tokens, `flutter_web_auth_2` for OAuth, settings screen with a
   "paste your client ID" field per network. X gets a full implementation;

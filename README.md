@@ -15,8 +15,10 @@ Project location: `C:/workspace/memer`.
   - **Text** layers (font, size, colour, bold, italics, optional outline).
   - **Hyperlink** layers (underlined text + a "copy link" button — the URL
     is also appended to the share caption since PNGs can't carry live links).
-  - **Image** layers (drag-resize on the canvas; crop / free-rotate /
-    background removal arrive in Phase 2).
+  - **Image** layers — drag-resize / free-rotate live on the main canvas;
+    a dedicated **image editor** modal (Edit image…) adds crop, 90°
+    quick-rotate, and a manual **remove-background painter** with a brush
+    and a magic-wand flood-fill tool.
   - **Callout bubble** layers in six shapes (round-speech, sharp-speech,
     thought-cloud, rectangle, oval, scallop). Drag the small handle to
     re-aim the tail.
@@ -31,10 +33,10 @@ Project location: `C:/workspace/memer`.
 
 ## Roadmap
 
-- **Phase 2 — image tools.** Crop, free-rotate (with a degrees field), and a
-  manual "remove background" painter (brush + magic-wand). On apply, the
-  modified alpha is baked into the layer; the original bytes are preserved
-  so you can re-open the masker losslessly.
+- **Phase 2 (shipped).** Image editor with crop, 90° rotate, and a manual
+  remove-background painter (brush + magic-wand). The original bytes are
+  preserved so the editor's "Reset to original" can restore the untouched
+  source on demand.
 - **Phase 3 — multi-account posting.** Connect X, Instagram, Facebook,
   Threads and LinkedIn accounts. OAuth tokens live in
   `flutter_secure_storage` on-device. CLAUDE.md forbids embedding secrets,
@@ -119,8 +121,10 @@ memer/
     screens/
       home_screen.dart            landing screen
       editor_screen.dart          3-pane editor (layers | canvas | inspector)
+      image_editor_screen.dart    modal: crop / rotate / background-mask
     services/
       image_export_service.dart   RepaintBoundary → PNG, + save
+      image_processing_service.dart pure-Dart crop / rotate / flood-fill / mask
       media_picker_service.dart   pick an image (all platforms)
       platform_saver_default.dart native "save as" dialog
       platform_saver_web.dart     web download (conditional import)
@@ -130,6 +134,7 @@ memer/
         direct_api_poster.dart    documented stub for API posting
   test/
     meme_controller_test.dart     unit tests for the layer model + controller
+    image_processing_service_test.dart tests for crop / rotate / flood-fill
 ```
 
 ## Working on memer with Claude Code
@@ -164,6 +169,7 @@ used for preview and export — and the selection handles are deliberately
 | `file_selector`       | Cross-platform image picking and "save as" dialog.         |
 | `flutter_colorpicker` | Pure-Dart colour picker that works on every platform.      |
 | `url_launcher`        | Open URLs from the inspector preview.                      |
+| `image`               | Pure-Dart crop / rotate / flood-fill for the image editor. |
 
 ## Platform notes
 

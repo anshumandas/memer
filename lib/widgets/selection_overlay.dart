@@ -8,45 +8,84 @@ import '../models/meme_controller.dart';
 /// Sits on top of [MemeCanvas] (deliberately *outside* the RepaintBoundary)
 /// and provides every direct-manipulation affordance:
 ///
-///   * Tap to select the topmost layer under the pointer (or clear selection
-///     by tapping the canvas chrome).
+///   * Tap to select the topmost layer under the pointer.
 ///   * Drag the selected layer's body to move it.
-///   * Drag a corner handle to resize. For raster images this is free-form;
-///     aspect ratio can be regained from the inspector.
+///   * Drag a corner handle to resize.
 ///   * Drag the rotate handle above the top edge to rotate.
 ///   * For [CalloutLayer], drag the small circular indicator to repoint the
 ///     tail target.
 ///
-/// The overlay deliberately lives in canvas-local fractional space — all
-/// drag deltas are divided by the canvas's on-screen size so the model
-/// stays resolution-independent (and the export keeps matching the preview).
-class LayerSelectionOverlay extends StatelessWidget {
+/// All gestures are tracked with **absolute** start-position snapshots
+/// (captured `onPanStart`) and then re-applied on every `onPanUpdate` using
+/// `globalPosition`. This avoids the drift you get when accumulating
+/// per-tick deltas against a closure-captured (potentially stale) layer.
+class LayerSelectionOverlay extends StatefulWidget {
   const LayerSelectionOverlay({super.key, required this.controller});
 
   final MemeController controller;
 
   @override
+  State<LayerSelectionOverlay> createState() => _LayerSelectionOverlayState();
+}
+
+class _LayerSelectionOverlayState extends State<LayerSelectionOverlay> {
+  final GlobalKey _overlayKey = GlobalKey();
+
+  // Snapshots captured at onPanStart for the in-progress gesture. Each is
+  // reset on pan end so the next gesture starts clean.
+  Offset? _moveStartPointerCanvas; // pointer position in canvas-local px
+  Offset? _moveStartLayerPos; // layer fractional position when grab began
+
+  Offset? _resizeStartPointerCanvas;
+  Offset? _resizeStartLayerPos;
+  Size? _resizeStartLayerSize;
+  double _resizeStartLayerRotation = 0;
+  ({double dxSign, double dySign})? _resizeCorner;
+
+  double? _rotateStartAngle;
+  double _rotateStartLayerRotation = 0;
+
+  Offset? _tailStartPointerCanvas;
+  Offset? _tailStartTarget;
+
+  /// Convert a global pointer position into canvas-local pixels using the
+  /// overlay's own RenderBox. The overlay always exactly matches the canvas
+  /// size, so a position relative to it == a position on the canvas.
+  Offset? _toCanvas(Offset global) {
+    final BuildContext? ctx = _overlayKey.currentContext;
+    if (ctx == null) return null;
+    final RenderObject? ro = ctx.findRenderObject();
+    if (ro is! RenderBox) return null;
+    return ro.globalToLocal(global);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (BuildContext context, BoxConstraints constraints) {
-        final Size canvasSize = constraints.biggest;
-        final Layer? selected = controller.selectedLayer;
-        return Stack(
-          fit: StackFit.expand,
-          children: <Widget>[
-            // Bottom layer: a transparent tap-target that picks whichever
-            // visible layer sits under the pointer. translucent so we keep
-            // receiving pointer events but don't paint anything.
-            Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onTapDown: (TapDownDetails d) =>
-                    _selectAt(d.localPosition, canvasSize),
-              ),
-            ),
-            if (selected != null && selected is! BackgroundLayer)
-              ..._buildHandlesFor(context, selected, canvasSize),
-          ],
+    return ListenableBuilder(
+      listenable: widget.controller,
+      builder: (BuildContext context, _) {
+        return LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints constraints) {
+            final Size canvasSize = constraints.biggest;
+            final Layer? selected = widget.controller.selectedLayer;
+            return Stack(
+              key: _overlayKey,
+              fit: StackFit.expand,
+              children: <Widget>[
+                // Bottom layer: a transparent tap-target that picks
+                // whichever visible layer sits under the pointer.
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTapDown: (TapDownDetails d) =>
+                        _selectAt(d.localPosition, canvasSize),
+                  ),
+                ),
+                if (selected != null && selected is! BackgroundLayer)
+                  ..._buildHandlesFor(context, selected, canvasSize),
+              ],
+            );
+          },
         );
       },
     );
@@ -60,30 +99,23 @@ class LayerSelectionOverlay extends StatelessWidget {
       localPx.dy / canvasSize.height,
     );
     // Walk top-down (last drawn first) and pick the first layer whose
-    // (unrotated) bounding rect contains the point. Locked & invisible
-    // layers don't accept selection.
-    for (int i = controller.config.layers.length - 1; i >= 0; i--) {
-      final Layer l = controller.config.layers[i];
+    // (unrotated) bounding rect contains the point.
+    final List<Layer> layers = widget.controller.config.layers;
+    for (int i = layers.length - 1; i >= 0; i--) {
+      final Layer l = layers[i];
       if (!l.visible || l.locked) continue;
-      if (l is BackgroundLayer) {
-        // Background is the last-resort hit; only consider it after every
-        // other layer has been checked.
-        continue;
-      }
+      if (l is BackgroundLayer) continue;
       if (_layerRectFractional(l).contains(frac)) {
-        controller.selectLayer(l.id);
+        widget.controller.selectLayer(l.id);
         return;
       }
     }
-    // Nothing else hit — fall back to the background (always selectable
-    // when present) or clear the selection.
-    final Layer? bg = controller.config.layers.isNotEmpty
-        ? controller.config.layers.first
-        : null;
+    // Fall back to the background (always selectable) or clear.
+    final Layer? bg = layers.isNotEmpty ? layers.first : null;
     if (bg is BackgroundLayer && !bg.locked) {
-      controller.selectLayer(bg.id);
+      widget.controller.selectLayer(bg.id);
     } else {
-      controller.clearSelection();
+      widget.controller.clearSelection();
     }
   }
 
@@ -105,12 +137,6 @@ class LayerSelectionOverlay extends StatelessWidget {
     final double cy = layer.position.dy * canvasSize.height;
     final ColorScheme scheme = Theme.of(context).colorScheme;
 
-    // We build a single rotated layer composed of:
-    //   - selection box + drag-to-move
-    //   - 4 corner resize handles
-    //   - 1 rotate handle above top edge
-    // Wrapping all of them in one Transform.rotate keeps them visually pinned
-    // to the layer even when [layer.rotation] is non-zero.
     final Widget rotatedHandles = Positioned(
       left: cx - w / 2,
       top: cy - h / 2,
@@ -122,7 +148,7 @@ class LayerSelectionOverlay extends StatelessWidget {
           clipBehavior: Clip.none,
           fit: StackFit.expand,
           children: <Widget>[
-            // Dashed bounding box.
+            // Dashed bounding box (visual only).
             IgnorePointer(
               child: CustomPaint(
                 painter: _SelectionBoxPainter(color: scheme.primary),
@@ -133,38 +159,54 @@ class LayerSelectionOverlay extends StatelessWidget {
               Positioned.fill(
                 child: GestureDetector(
                   behavior: HitTestBehavior.translucent,
-                  onPanUpdate: (DragUpdateDetails d) {
-                    final Offset frac = Offset(
-                      d.delta.dx / canvasSize.width,
-                      d.delta.dy / canvasSize.height,
-                    );
-                    controller.moveLayer(
-                      layer.id,
-                      Offset(
-                        layer.position.dx + frac.dx,
-                        layer.position.dy + frac.dy,
-                      ),
-                    );
+                  onPanStart: (DragStartDetails d) {
+                    final Offset? p = _toCanvas(d.globalPosition);
+                    if (p == null) return;
+                    _moveStartPointerCanvas = p;
+                    _moveStartLayerPos =
+                        widget.controller.selectedLayer?.position;
+                  },
+                  onPanUpdate: (DragUpdateDetails d) =>
+                      _onMoveUpdate(d.globalPosition, canvasSize),
+                  onPanEnd: (_) {
+                    _moveStartPointerCanvas = null;
+                    _moveStartLayerPos = null;
                   },
                 ),
               ),
-            // 4 corner resize handles. Each (dxSign, dySign) tells _resize
-            // which corner this handle is and which direction to grow.
-            for (final (double dxSign, double dySign) corner
-                in const <(double, double)>[
-              (-1, -1),
-              (1, -1),
-              (-1, 1),
-              (1, 1),
+            // 4 corner resize handles.
+            for (final ({double dxSign, double dySign}) corner
+                in const <({double dxSign, double dySign})>[
+              (dxSign: -1, dySign: -1),
+              (dxSign: 1, dySign: -1),
+              (dxSign: -1, dySign: 1),
+              (dxSign: 1, dySign: 1),
             ])
               _CornerHandle(
                 color: scheme.primary,
-                left: corner.$1 < 0 ? -8 : null,
-                right: corner.$1 > 0 ? -8 : null,
-                top: corner.$2 < 0 ? -8 : null,
-                bottom: corner.$2 > 0 ? -8 : null,
-                onDrag: (DragUpdateDetails d) =>
-                    _resize(layer, canvasSize, corner.$1, corner.$2, d.delta),
+                left: corner.dxSign < 0 ? -8 : null,
+                right: corner.dxSign > 0 ? -8 : null,
+                top: corner.dySign < 0 ? -8 : null,
+                bottom: corner.dySign > 0 ? -8 : null,
+                onStart: (DragStartDetails d) {
+                  final Offset? p = _toCanvas(d.globalPosition);
+                  if (p == null) return;
+                  _resizeStartPointerCanvas = p;
+                  final Layer? current = widget.controller.selectedLayer;
+                  if (current == null) return;
+                  _resizeStartLayerPos = current.position;
+                  _resizeStartLayerSize = current.size;
+                  _resizeStartLayerRotation = current.rotation;
+                  _resizeCorner = corner;
+                },
+                onUpdate: (DragUpdateDetails d) =>
+                    _onResizeUpdate(d.globalPosition, canvasSize),
+                onEnd: () {
+                  _resizeStartPointerCanvas = null;
+                  _resizeStartLayerPos = null;
+                  _resizeStartLayerSize = null;
+                  _resizeCorner = null;
+                },
               ),
             // Rotate handle above the top edge.
             Positioned(
@@ -172,11 +214,29 @@ class LayerSelectionOverlay extends StatelessWidget {
               left: w / 2 - 12,
               child: _RotateHandle(
                 color: scheme.primary,
-                onDrag: (Offset globalDelta) =>
-                    _rotate(layer, canvasSize, globalDelta),
-                centerCanvas: Offset(cx, cy),
-                getRenderBox: () =>
-                    null, // overlay coords; we use deltas directly
+                onStart: (DragStartDetails d) {
+                  final Offset? p = _toCanvas(d.globalPosition);
+                  if (p == null) return;
+                  final Offset center = Offset(cx, cy);
+                  _rotateStartAngle =
+                      math.atan2(p.dy - center.dy, p.dx - center.dx);
+                  _rotateStartLayerRotation =
+                      widget.controller.selectedLayer?.rotation ?? 0;
+                },
+                onUpdate: (DragUpdateDetails d) {
+                  if (_rotateStartAngle == null) return;
+                  final Offset? p = _toCanvas(d.globalPosition);
+                  if (p == null) return;
+                  final Offset center = Offset(cx, cy);
+                  final double now =
+                      math.atan2(p.dy - center.dy, p.dx - center.dx);
+                  final double delta = now - _rotateStartAngle!;
+                  widget.controller.rotateLayer(
+                    layer.id,
+                    _rotateStartLayerRotation + delta,
+                  );
+                },
+                onEnd: () => _rotateStartAngle = null,
               ),
             ),
           ],
@@ -186,25 +246,38 @@ class LayerSelectionOverlay extends StatelessWidget {
 
     final List<Widget> widgets = <Widget>[rotatedHandles];
 
-    // Callouts get a separate (non-rotated) draggable indicator at their
-    // tail target so the user can re-aim the tail without first moving the
-    // bubble.
     if (layer is CalloutLayer && layer.showTail) {
       widgets.add(_TailTargetHandle(
         canvasSize: canvasSize,
         target: layer.tailTarget,
         color: scheme.tertiary,
-        onDrag: (Offset deltaPx) {
+        onStart: (DragStartDetails d) {
+          final Offset? p = _toCanvas(d.globalPosition);
+          if (p == null) return;
+          _tailStartPointerCanvas = p;
+          _tailStartTarget = layer.tailTarget;
+        },
+        onUpdate: (DragUpdateDetails d) {
+          if (_tailStartPointerCanvas == null || _tailStartTarget == null) {
+            return;
+          }
+          final Offset? p = _toCanvas(d.globalPosition);
+          if (p == null) return;
+          final Offset deltaPx = p - _tailStartPointerCanvas!;
           final Offset next = Offset(
-            (layer.tailTarget.dx + deltaPx.dx / canvasSize.width)
+            (_tailStartTarget!.dx + deltaPx.dx / canvasSize.width)
                 .clamp(0.0, 1.0),
-            (layer.tailTarget.dy + deltaPx.dy / canvasSize.height)
+            (_tailStartTarget!.dy + deltaPx.dy / canvasSize.height)
                 .clamp(0.0, 1.0),
           );
-          controller.updateLayer(
+          widget.controller.updateLayer(
             layer.id,
             (Layer l) => (l as CalloutLayer).copyWith(tailTarget: next),
           );
+        },
+        onEnd: () {
+          _tailStartPointerCanvas = null;
+          _tailStartTarget = null;
         },
       ));
     }
@@ -214,60 +287,71 @@ class LayerSelectionOverlay extends StatelessWidget {
 
   // ---------------------------------------------------------- gesture math
 
-  void _resize(Layer layer, Size canvasSize, double dxSign, double dySign,
-      Offset deltaPx) {
-    // Local delta (in the layer's own rotated frame) is screen delta rotated
-    // by the inverse layer rotation.
-    final double c = math.cos(-layer.rotation);
-    final double s = math.sin(-layer.rotation);
+  void _onMoveUpdate(Offset globalPointer, Size canvasSize) {
+    if (_moveStartPointerCanvas == null || _moveStartLayerPos == null) return;
+    final Offset? now = _toCanvas(globalPointer);
+    if (now == null) return;
+    final Offset deltaPx = now - _moveStartPointerCanvas!;
+    final Offset target = Offset(
+      _moveStartLayerPos!.dx + deltaPx.dx / canvasSize.width,
+      _moveStartLayerPos!.dy + deltaPx.dy / canvasSize.height,
+    );
+    final Layer? current = widget.controller.selectedLayer;
+    if (current == null) return;
+    widget.controller.moveLayer(current.id, target);
+  }
+
+  void _onResizeUpdate(Offset globalPointer, Size canvasSize) {
+    if (_resizeStartPointerCanvas == null ||
+        _resizeStartLayerPos == null ||
+        _resizeStartLayerSize == null ||
+        _resizeCorner == null) {
+      return;
+    }
+    final Offset? now = _toCanvas(globalPointer);
+    if (now == null) return;
+    final Offset deltaPx = now - _resizeStartPointerCanvas!;
+
+    // Project the canvas-space delta back into the layer's own (rotated) frame.
+    final double c = math.cos(-_resizeStartLayerRotation);
+    final double s = math.sin(-_resizeStartLayerRotation);
     final Offset local = Offset(
       deltaPx.dx * c - deltaPx.dy * s,
       deltaPx.dx * s + deltaPx.dy * c,
     );
 
-    // Pulling a corner outward = grow; we keep the *opposite* corner anchored.
+    final double dxSign = _resizeCorner!.dxSign;
+    final double dySign = _resizeCorner!.dySign;
+
     final double newW =
-        (layer.size.width + (local.dx / canvasSize.width) * dxSign)
+        (_resizeStartLayerSize!.width + (local.dx / canvasSize.width) * dxSign)
             .clamp(0.04, 1.0);
-    final double newH =
-        (layer.size.height + (local.dy / canvasSize.height) * dySign)
-            .clamp(0.04, 1.0);
+    final double newH = (_resizeStartLayerSize!.height +
+            (local.dy / canvasSize.height) * dySign)
+        .clamp(0.04, 1.0);
 
-    // Position shifts by half the size change (in the rotated frame) so the
-    // anchored corner stays still.
-    final double dxFrac = (newW - layer.size.width) * 0.5 * dxSign;
-    final double dyFrac = (newH - layer.size.height) * 0.5 * dySign;
-    final Offset shiftLocal = Offset(dxFrac, dyFrac);
-
-    // Rotate the shift back into canvas-aligned coordinates.
-    final double rc = math.cos(layer.rotation);
-    final double rs = math.sin(layer.rotation);
+    // The opposite corner stays anchored; the centre shifts by half of the
+    // size delta (in the rotated frame), rotated back into canvas space.
+    final double dxFrac = (newW - _resizeStartLayerSize!.width) * 0.5 * dxSign;
+    final double dyFrac = (newH - _resizeStartLayerSize!.height) * 0.5 * dySign;
+    final double rc = math.cos(_resizeStartLayerRotation);
+    final double rs = math.sin(_resizeStartLayerRotation);
     final Offset shiftCanvas = Offset(
-      shiftLocal.dx * rc - shiftLocal.dy * rs,
-      shiftLocal.dx * rs + shiftLocal.dy * rc,
+      dxFrac * rc - dyFrac * rs,
+      dxFrac * rs + dyFrac * rc,
     );
 
     final Offset newPos = Offset(
-      (layer.position.dx + shiftCanvas.dx).clamp(0.0, 1.0),
-      (layer.position.dy + shiftCanvas.dy).clamp(0.0, 1.0),
+      (_resizeStartLayerPos!.dx + shiftCanvas.dx).clamp(0.0, 1.0),
+      (_resizeStartLayerPos!.dy + shiftCanvas.dy).clamp(0.0, 1.0),
     );
 
-    controller.updateLayer(
-      layer.id,
-      (Layer l) => l.copyWithBase(
-        position: newPos,
-        size: Size(newW, newH),
-      ),
+    final Layer? current = widget.controller.selectedLayer;
+    if (current == null) return;
+    widget.controller.updateLayer(
+      current.id,
+      (Layer l) => l.copyWithBase(position: newPos, size: Size(newW, newH)),
     );
-  }
-
-  void _rotate(Layer layer, Size canvasSize, Offset deltaPx) {
-    // Treat the screen delta as an angular nudge proportional to the bubble
-    // size. This avoids the need to know the global pointer position — works
-    // well enough for desktop and touch.
-    final double scale = math.max(canvasSize.width, canvasSize.height);
-    final double delta = deltaPx.dx / scale * math.pi; // ~180° per canvas-width
-    controller.rotateLayer(layer.id, layer.rotation + delta);
   }
 }
 
@@ -284,7 +368,6 @@ class _SelectionBoxPainter extends CustomPainter {
       ..color = color.withOpacity(0.9)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
-    // Simple dashed rectangle.
     const double dash = 6;
     const double gap = 4;
     final Path path = Path();
@@ -299,6 +382,7 @@ class _SelectionBoxPainter extends CustomPainter {
 
   void _dashedLine(Path path, Offset a, Offset b, double dash, double gap) {
     final double dist = (b - a).distance;
+    if (dist == 0) return;
     final Offset dir = (b - a) / dist;
     double t = 0;
     while (t < dist) {
@@ -316,7 +400,9 @@ class _SelectionBoxPainter extends CustomPainter {
 class _CornerHandle extends StatelessWidget {
   const _CornerHandle({
     required this.color,
-    required this.onDrag,
+    required this.onStart,
+    required this.onUpdate,
+    required this.onEnd,
     this.left,
     this.right,
     this.top,
@@ -324,7 +410,9 @@ class _CornerHandle extends StatelessWidget {
   });
 
   final Color color;
-  final ValueChanged<DragUpdateDetails> onDrag;
+  final ValueChanged<DragStartDetails> onStart;
+  final ValueChanged<DragUpdateDetails> onUpdate;
+  final VoidCallback onEnd;
   final double? left;
   final double? right;
   final double? top;
@@ -339,16 +427,25 @@ class _CornerHandle extends StatelessWidget {
       bottom: bottom,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onPanUpdate: onDrag,
+        onPanStart: onStart,
+        onPanUpdate: onUpdate,
+        onPanEnd: (_) => onEnd(),
         child: MouseRegion(
           cursor: SystemMouseCursors.resizeUpLeftDownRight,
           child: Container(
-            width: 16,
-            height: 16,
+            width: 18,
+            height: 18,
             decoration: BoxDecoration(
               color: Colors.white,
-              shape: BoxShape.rectangle,
+              borderRadius: BorderRadius.circular(3),
               border: Border.all(color: color, width: 2),
+              boxShadow: <BoxShadow>[
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.18),
+                  blurRadius: 2,
+                  offset: const Offset(0, 1),
+                ),
+              ],
             ),
           ),
         ),
@@ -360,32 +457,39 @@ class _CornerHandle extends StatelessWidget {
 class _RotateHandle extends StatelessWidget {
   const _RotateHandle({
     required this.color,
-    required this.onDrag,
-    required this.centerCanvas,
-    required this.getRenderBox,
+    required this.onStart,
+    required this.onUpdate,
+    required this.onEnd,
   });
 
   final Color color;
-  final ValueChanged<Offset> onDrag;
-  final Offset centerCanvas;
-  // Reserved for a future "absolute pointer angle" rotate; the simple
-  // delta-based rotate doesn't need it.
-  final RenderBox? Function() getRenderBox;
+  final ValueChanged<DragStartDetails> onStart;
+  final ValueChanged<DragUpdateDetails> onUpdate;
+  final VoidCallback onEnd;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onPanUpdate: (DragUpdateDetails d) => onDrag(d.delta),
+      onPanStart: onStart,
+      onPanUpdate: onUpdate,
+      onPanEnd: (_) => onEnd(),
       child: MouseRegion(
         cursor: SystemMouseCursors.grab,
         child: Container(
-          width: 24,
-          height: 24,
+          width: 26,
+          height: 26,
           decoration: BoxDecoration(
             color: Colors.white,
             shape: BoxShape.circle,
             border: Border.all(color: color, width: 2),
+            boxShadow: <BoxShadow>[
+              BoxShadow(
+                color: Colors.black.withOpacity(0.18),
+                blurRadius: 3,
+                offset: const Offset(0, 1),
+              ),
+            ],
           ),
           child: Icon(Icons.refresh, size: 16, color: color),
         ),
@@ -399,23 +503,29 @@ class _TailTargetHandle extends StatelessWidget {
     required this.canvasSize,
     required this.target,
     required this.color,
-    required this.onDrag,
+    required this.onStart,
+    required this.onUpdate,
+    required this.onEnd,
   });
 
   final Size canvasSize;
   final Offset target;
   final Color color;
-  final ValueChanged<Offset> onDrag;
+  final ValueChanged<DragStartDetails> onStart;
+  final ValueChanged<DragUpdateDetails> onUpdate;
+  final VoidCallback onEnd;
 
   @override
   Widget build(BuildContext context) {
-    const double r = 18;
+    const double r = 20;
     return Positioned(
       left: target.dx * canvasSize.width - r / 2,
       top: target.dy * canvasSize.height - r / 2,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onPanUpdate: (DragUpdateDetails d) => onDrag(d.delta),
+        onPanStart: onStart,
+        onPanUpdate: onUpdate,
+        onPanEnd: (_) => onEnd(),
         child: MouseRegion(
           cursor: SystemMouseCursors.grab,
           child: Container(
@@ -425,6 +535,13 @@ class _TailTargetHandle extends StatelessWidget {
               color: color.withOpacity(0.85),
               shape: BoxShape.circle,
               border: Border.all(color: Colors.white, width: 2),
+              boxShadow: <BoxShadow>[
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.25),
+                  blurRadius: 3,
+                  offset: const Offset(0, 1),
+                ),
+              ],
             ),
           ),
         ),

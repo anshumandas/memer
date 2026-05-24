@@ -124,42 +124,39 @@ class _EditorScreenState extends State<EditorScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: _controller,
-      builder: (BuildContext context, _) {
-        return Scaffold(
-          appBar: AppBar(
-            title: const Text('Editor'),
-            actions: <Widget>[
-              _AspectMenu(controller: _controller),
-              IconButton(
-                tooltip: 'Save image',
-                onPressed: _busy ? null : _save,
-                icon: const Icon(Icons.download_outlined),
-              ),
-              PopupMenuButton<SocialPoster>(
-                tooltip: 'Post to…',
-                icon: const Icon(Icons.send_outlined),
-                enabled: !_busy,
-                onSelected: _share,
-                itemBuilder: (BuildContext _) => <PopupMenuEntry<SocialPoster>>[
-                  for (final SocialPoster p in _posters)
-                    PopupMenuItem<SocialPoster>(value: p, child: Text(p.label)),
-                ],
-              ),
-              const SizedBox(width: 4),
+    // No outer ListenableBuilder here: each panel listens independently so a
+    // layer drag rebuilds only the canvas + overlay (and the inspector, when
+    // it's showing the moving layer), not the whole scaffold.
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Editor'),
+        actions: <Widget>[
+          _AspectMenu(controller: _controller),
+          IconButton(
+            tooltip: 'Save image',
+            onPressed: _busy ? null : _save,
+            icon: const Icon(Icons.download_outlined),
+          ),
+          PopupMenuButton<SocialPoster>(
+            tooltip: 'Post to…',
+            icon: const Icon(Icons.send_outlined),
+            enabled: !_busy,
+            onSelected: _share,
+            itemBuilder: (BuildContext _) => <PopupMenuEntry<SocialPoster>>[
+              for (final SocialPoster p in _posters)
+                PopupMenuItem<SocialPoster>(value: p, child: Text(p.label)),
             ],
           ),
-          body: LayoutBuilder(
-            builder: (BuildContext context, BoxConstraints constraints) {
-              final bool wide = constraints.maxWidth >= 980;
-              if (wide) return _buildWide(context);
-              return _buildNarrow(context);
-            },
-          ),
-          bottomNavigationBar: _buildShareBar(),
-        );
-      },
+          const SizedBox(width: 4),
+        ],
+      ),
+      body: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          final bool wide = constraints.maxWidth >= 980;
+          if (wide) return _buildWide(context);
+          return _buildNarrow(context);
+        },
+      ),
     );
   }
 
@@ -247,38 +244,6 @@ class _EditorScreenState extends State<EditorScreen> {
               ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildShareBar() {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-        child: Row(
-          children: <Widget>[
-            Expanded(
-              child: FilledButton.icon(
-                onPressed:
-                    _busy ? null : () => _share(const ShareSheetPoster()),
-                icon: _busy
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.ios_share),
-                label: Text(_busy ? 'Working…' : 'Share to apps…'),
-              ),
-            ),
-            const SizedBox(width: 12),
-            OutlinedButton.icon(
-              onPressed: _busy ? null : _save,
-              icon: const Icon(Icons.save_alt),
-              label: const Text('Save'),
-            ),
-          ],
         ),
       ),
     );

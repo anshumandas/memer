@@ -15,9 +15,14 @@ import 'layer_renderers/text_renderer.dart';
 /// widget tree feeds both the on-screen editor preview and the off-screen
 /// PNG export — preview is the export (WYSIWYG).
 ///
+/// The canvas owns its own [ListenableBuilder] so a layer drag re-renders
+/// the canvas without forcing the whole editor (layers panel, inspector,
+/// scaffold) to rebuild. Each individual layer is also wrapped in a
+/// [RepaintBoundary] so sibling layers don't repaint when one moves.
+///
 /// This widget deliberately knows nothing about selection / drag / resize
-/// affordances. Those live in a sibling overlay (`SelectionOverlay`) so the
-/// handles never end up in the exported pixels.
+/// affordances. Those live in a sibling overlay (`LayerSelectionOverlay`)
+/// so the handles never end up in the exported pixels.
 class MemeCanvas extends StatelessWidget {
   const MemeCanvas({
     super.key,
@@ -32,27 +37,38 @@ class MemeCanvas extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final MemeConfig config = controller.config;
-    return AspectRatio(
-      aspectRatio: config.aspect.ratio,
-      child: ClipRect(
-        child: RepaintBoundary(
-          key: repaintKey,
-          child: LayoutBuilder(
-            builder: (BuildContext context, BoxConstraints constraints) {
-              final Size canvasSize = constraints.biggest;
-              return Stack(
-                fit: StackFit.expand,
-                children: <Widget>[
-                  for (final Layer layer in config.layers)
-                    if (layer.visible)
-                      _LayerHost(layer: layer, canvasSize: canvasSize),
-                ],
-              );
-            },
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (BuildContext context, _) {
+        final MemeConfig config = controller.config;
+        return AspectRatio(
+          aspectRatio: config.aspect.ratio,
+          child: ClipRect(
+            child: RepaintBoundary(
+              key: repaintKey,
+              child: LayoutBuilder(
+                builder: (BuildContext context, BoxConstraints constraints) {
+                  final Size canvasSize = constraints.biggest;
+                  return Stack(
+                    fit: StackFit.expand,
+                    children: <Widget>[
+                      for (final Layer layer in config.layers)
+                        if (layer.visible)
+                          RepaintBoundary(
+                            key: ValueKey<String>(layer.id),
+                            child: _LayerHost(
+                              layer: layer,
+                              canvasSize: canvasSize,
+                            ),
+                          ),
+                    ],
+                  );
+                },
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

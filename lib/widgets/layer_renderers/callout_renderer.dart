@@ -26,7 +26,6 @@ class CalloutRenderer extends StatelessWidget {
     final double bubbleH = layer.size.height * canvasSize.height;
     final double centerX = layer.position.dx * canvasSize.width;
     final double centerY = layer.position.dy * canvasSize.height;
-    final Offset bubbleCenter = Offset(centerX, centerY);
 
     final Offset targetCanvas = Offset(
       layer.tailTarget.dx * canvasSize.width,
@@ -34,8 +33,8 @@ class CalloutRenderer extends StatelessWidget {
     );
     // Translate the tail target into the bubble's local coordinate space
     // (origin = bubble's top-left, axes in pixels).
-    final Offset targetLocal = targetCanvas -
-        Offset(bubbleCenter.dx - bubbleW / 2, bubbleCenter.dy - bubbleH / 2);
+    final Offset targetLocal =
+        targetCanvas - Offset(centerX - bubbleW / 2, centerY - bubbleH / 2);
 
     final double fontSize = layer.fontSize * canvasSize.height;
 
@@ -49,9 +48,11 @@ class CalloutRenderer extends StatelessWidget {
         tailTargetLocal: targetLocal,
       ),
       child: Padding(
+        // Leave a bigger horizontal pad for oval/cloud where the corners
+        // round in further; sufficient for the others too.
         padding: EdgeInsets.symmetric(
-          horizontal: bubbleW * 0.08,
-          vertical: bubbleH * 0.12,
+          horizontal: bubbleW * 0.10,
+          vertical: bubbleH * 0.14,
         ),
         child: Center(
           child: Text(
@@ -95,47 +96,56 @@ class _CalloutPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final Rect body = Offset.zero & size;
+
     final Path bodyPath = _bodyPathFor(shape, body);
 
-    Path fullPath = Path.from(bodyPath);
+    // For shapes whose perimeter is *complex* (cloud, scallop, oval) we draw
+    // the tail as a separate sub-path UNIONED in via Path.combine so the
+    // outline stays one continuous stroke. For shapes with a flat perimeter
+    // (rounded rect, sharp rect) the same approach is used; the union is
+    // robust enough and removes any visual seam at the tail base.
+    Path fullPath = bodyPath;
+    Path? tailOverlayPath; // for the trailing circles on a thought cloud
+
     if (showTail && shape != CalloutKind.rectangle) {
-      final Path? tail = _tailPath(body, tailTargetLocal, shape);
-      if (tail != null) {
-        fullPath = Path.combine(PathOperation.union, fullPath, tail);
+      if (shape == CalloutKind.thoughtCloud) {
+        tailOverlayPath = _thoughtTrail(body, tailTargetLocal);
+      } else {
+        final Path? tail = _tailPath(body, tailTargetLocal, shape);
+        if (tail != null) {
+          fullPath = Path.combine(PathOperation.union, fullPath, tail);
+        }
       }
     }
 
     // Soft shadow so the bubble lifts off the underlying layers.
-    canvas.drawShadow(fullPath, Colors.black.withOpacity(0.35), 4, false);
+    canvas.drawShadow(fullPath, Colors.black.withOpacity(0.32), 4, false);
+    if (tailOverlayPath != null) {
+      canvas.drawShadow(
+          tailOverlayPath, Colors.black.withOpacity(0.32), 2, false);
+    }
 
     final Paint fillPaint = Paint()
       ..color = fill
-      ..style = PaintingStyle.fill;
+      ..style = PaintingStyle.fill
+      ..isAntiAlias = true;
     canvas.drawPath(fullPath, fillPaint);
+    if (tailOverlayPath != null) {
+      canvas.drawPath(tailOverlayPath, fillPaint);
+    }
 
     if (borderWidth > 0) {
       final Paint stroke = Paint()
         ..color = border
         ..style = PaintingStyle.stroke
         ..strokeWidth = borderWidth
-        ..strokeJoin = StrokeJoin.round;
+        ..strokeJoin = StrokeJoin.round
+        ..strokeCap = StrokeCap.round
+        ..isAntiAlias = true;
       canvas.drawPath(fullPath, stroke);
-    }
-
-    // Thought-cloud bubbles get a trail of shrinking circles between the
-    // body and the tail target.
-    if (showTail && shape == CalloutKind.thoughtCloud) {
-      _drawThoughtTrail(
-          canvas,
-          body,
-          tailTargetLocal,
-          fillPaint,
-          borderWidth > 0
-              ? (Paint()
-                ..color = border
-                ..style = PaintingStyle.stroke
-                ..strokeWidth = borderWidth)
-              : null);
+      if (tailOverlayPath != null) {
+        canvas.drawPath(tailOverlayPath, stroke);
+      }
     }
   }
 
@@ -146,111 +156,212 @@ class _CalloutPainter extends CustomPainter {
       case CalloutKind.rectangle:
         return Path()..addRect(r);
       case CalloutKind.speechSharp:
-        return Path()..addRect(r);
-      case CalloutKind.oval:
-        return Path()..addOval(r);
+        // A barely-rounded rect — corners are visible but not soft.
+        return Path()
+          ..addRRect(RRect.fromRectAndRadius(r, const Radius.circular(4)));
       case CalloutKind.speechRound:
         return Path()
           ..addRRect(RRect.fromRectAndRadius(
             r,
             Radius.circular(math.min(r.width, r.height) * 0.22),
           ));
+      case CalloutKind.oval:
+        return Path()..addOval(r);
       case CalloutKind.thoughtCloud:
-        // A thought cloud is a chain of overlapping circles around the bubble
-        // perimeter, unioned into one path.
-        return _cloudPath(r, 14, irregular: false);
+        return _smoothCloudPath(r, bumps: 10);
       case CalloutKind.scallop:
-        return _cloudPath(r, 22, irregular: true);
+        return _scallopedRectPath(r);
     }
   }
 
-  Path _cloudPath(Rect r, int bumps, {required bool irregular}) {
-    final Path p = Path();
+  /// Draws a fluffy cloud by walking around an inner ellipse and arcing
+  /// outward between each step. Each segment is a circular arc, so adjacent
+  /// bumps connect tangentially and the outline is smooth.
+  Path _smoothCloudPath(Rect r, {required int bumps}) {
     final double cx = r.center.dx;
     final double cy = r.center.dy;
-    final double rx = r.width / 2 - 2;
-    final double ry = r.height / 2 - 2;
-    final double bumpR = math.min(rx, ry) * (irregular ? 0.18 : 0.22);
+    // Inner ellipse the bumps are anchored to.
+    final double baseRx = r.width / 2 * 0.86;
+    final double baseRy = r.height / 2 * 0.86;
+    final double bumpRadius =
+        math.min(baseRx, baseRy) * (math.pi / bumps) * 1.05;
 
-    // Inner ellipse fills the middle so the cloud isn't hollow.
-    p.addOval(Rect.fromCenter(
-      center: r.center,
-      width: r.width * 0.78,
-      height: r.height * 0.74,
-    ));
-
-    for (int i = 0; i < bumps; i++) {
+    final Path p = Path();
+    for (int i = 0; i <= bumps; i++) {
       final double t = i / bumps * 2 * math.pi;
-      final double wobble = irregular ? math.sin(t * 3) * 4 : 0;
-      final double bx = cx + math.cos(t) * (rx - bumpR + wobble);
-      final double by = cy + math.sin(t) * (ry - bumpR + wobble);
-      p.addOval(Rect.fromCircle(center: Offset(bx, by), radius: bumpR));
+      final Offset pt =
+          Offset(cx + math.cos(t) * baseRx, cy + math.sin(t) * baseRy);
+      if (i == 0) {
+        p.moveTo(pt.dx, pt.dy);
+      } else {
+        // Arc outward: clockwise:false makes the bulge sit on the *outside*
+        // of the ellipse (away from the center).
+        p.arcToPoint(
+          pt,
+          radius: Radius.circular(bumpRadius),
+          clockwise: false,
+        );
+      }
     }
+    p.close();
+    return p;
+  }
+
+  /// Rounded-rectangle whose edges are bumped outward with small semicircles.
+  /// Bump count along each side is derived from edge length so the bumps
+  /// stay roughly square regardless of aspect ratio.
+  Path _scallopedRectPath(Rect r) {
+    // Aim for ~0.12 of the shorter side per bump.
+    final double s = math.min(r.width, r.height);
+    final double targetBumpLen = s * 0.13;
+    final int bumpsX = math.max(3, (r.width / targetBumpLen).round());
+    final int bumpsY = math.max(3, (r.height / targetBumpLen).round());
+    final double bumpW = r.width / bumpsX;
+    final double bumpH = r.height / bumpsY;
+
+    final Path p = Path();
+    p.moveTo(r.left, r.top);
+    // Top edge — bumps bulge UP (negative y).
+    for (int i = 1; i <= bumpsX; i++) {
+      p.arcToPoint(
+        Offset(r.left + bumpW * i, r.top),
+        radius: Radius.circular(bumpW / 2),
+        clockwise: true,
+      );
+    }
+    // Right edge — bumps bulge RIGHT.
+    for (int i = 1; i <= bumpsY; i++) {
+      p.arcToPoint(
+        Offset(r.right, r.top + bumpH * i),
+        radius: Radius.circular(bumpH / 2),
+        clockwise: true,
+      );
+    }
+    // Bottom edge — bumps bulge DOWN.
+    for (int i = 1; i <= bumpsX; i++) {
+      p.arcToPoint(
+        Offset(r.right - bumpW * i, r.bottom),
+        radius: Radius.circular(bumpW / 2),
+        clockwise: true,
+      );
+    }
+    // Left edge — bumps bulge LEFT, closing the path.
+    for (int i = 1; i <= bumpsY; i++) {
+      p.arcToPoint(
+        Offset(r.left, r.bottom - bumpH * i),
+        radius: Radius.circular(bumpH / 2),
+        clockwise: true,
+      );
+    }
+    p.close();
     return p;
   }
 
   // -------------------------------------------------------------- tail
 
-  /// Returns a triangular tail path whose tip sits at [targetLocal] and whose
-  /// base spans a short segment on the closest body edge. Returns null when
-  /// the target is inside the bubble (no tail to draw).
+  /// Returns a tail path whose tip sits at [targetLocal] and whose base sits
+  /// against the body's perimeter. Returns null when the target falls inside
+  /// the bubble (no tail to draw).
+  ///
+  /// The base is anchored on the nearest edge of the body's bounding rect
+  /// for rectangular shapes, or on the ellipse perimeter for ovals — both
+  /// approximations are visually fine because the shape outline is already
+  /// close to its bounding rect.
   Path? _tailPath(Rect body, Offset targetLocal, CalloutKind kind) {
-    // If the target falls inside the bubble, skip the tail.
-    if (body.inflate(2).contains(targetLocal)) return null;
+    // If the target is inside the body, skip the tail.
+    if (body.deflate(2).contains(targetLocal)) return null;
 
-    // Find the closest point on the body rect's perimeter to the target.
-    final double clampedX = targetLocal.dx.clamp(body.left, body.right);
-    final double clampedY = targetLocal.dy.clamp(body.top, body.bottom);
-    final double dxOut = (targetLocal.dx - clampedX).abs();
-    final double dyOut = (targetLocal.dy - clampedY).abs();
-    // Choose which edge to anchor on by which axis has the larger overshoot.
-    final bool anchorVertical = dxOut > dyOut;
-    Offset anchorOnRect;
-    Offset baseAxis; // along-edge unit vector
-    if (anchorVertical) {
-      final double x = targetLocal.dx < body.center.dx ? body.left : body.right;
-      anchorOnRect = Offset(x, clampedY);
-      baseAxis = const Offset(0, 1);
+    // Anchor point on the bubble perimeter facing the target.
+    final Offset anchor = _perimeterAnchor(body, targetLocal, kind);
+
+    // Direction from anchor to target.
+    final Offset toTarget = targetLocal - anchor;
+    final double dist = toTarget.distance;
+    if (dist < 6) return null;
+
+    // The tail base spans perpendicular to the anchor→target direction,
+    // centred on the anchor. Width scales with bubble size and shape.
+    final double baseHalf = math.min(body.width, body.height) *
+        (kind == CalloutKind.speechSharp ? 0.08 : 0.11);
+    final Offset perp = Offset(-toTarget.dy / dist, toTarget.dx / dist);
+    final Offset baseA = anchor + perp * baseHalf;
+    final Offset baseB = anchor - perp * baseHalf;
+
+    final Path p = Path()..moveTo(baseA.dx, baseA.dy);
+
+    if (kind == CalloutKind.speechSharp) {
+      // Sharp triangle: straight lines to the tip and back.
+      p.lineTo(targetLocal.dx, targetLocal.dy);
+      p.lineTo(baseB.dx, baseB.dy);
     } else {
-      final double y = targetLocal.dy < body.center.dy ? body.top : body.bottom;
-      anchorOnRect = Offset(clampedX, y);
-      baseAxis = const Offset(1, 0);
+      // Smooth tail: gentle S-curve via quadratic beziers so the tail
+      // doesn't look like a stuck-on shard. Control points pulled toward
+      // the anchor side make the curve hug the bubble at the base.
+      final Offset cp1 = Offset(
+        anchor.dx + toTarget.dx * 0.35 + perp.dx * baseHalf * 0.4,
+        anchor.dy + toTarget.dy * 0.35 + perp.dy * baseHalf * 0.4,
+      );
+      final Offset cp2 = Offset(
+        anchor.dx + toTarget.dx * 0.35 - perp.dx * baseHalf * 0.4,
+        anchor.dy + toTarget.dy * 0.35 - perp.dy * baseHalf * 0.4,
+      );
+      p.quadraticBezierTo(cp1.dx, cp1.dy, targetLocal.dx, targetLocal.dy);
+      p.quadraticBezierTo(cp2.dx, cp2.dy, baseB.dx, baseB.dy);
     }
-
-    final double baseHalfWidth = math.min(body.width, body.height) *
-        (kind == CalloutKind.speechSharp ? 0.08 : 0.12);
-    final Offset baseA = anchorOnRect + baseAxis * baseHalfWidth;
-    final Offset baseB = anchorOnRect - baseAxis * baseHalfWidth;
-    return Path()
-      ..moveTo(baseA.dx, baseA.dy)
-      ..lineTo(targetLocal.dx, targetLocal.dy)
-      ..lineTo(baseB.dx, baseB.dy)
-      ..close();
+    p.close();
+    return p;
   }
 
-  void _drawThoughtTrail(
-    Canvas canvas,
-    Rect body,
-    Offset target,
-    Paint fillPaint,
-    Paint? strokePaint,
-  ) {
-    if (body.inflate(2).contains(target)) return;
-    // Two shrinking circles between the bubble edge and the target.
-    final Offset edge = Offset(
-      target.dx.clamp(body.left, body.right),
-      target.dy.clamp(body.top, body.bottom),
-    );
-    final Offset toTarget = target - edge;
+  /// Approximates the perimeter point of [body]'s shape closest to [target].
+  /// Uses the ellipse formula for ovals/clouds and the rect clamp otherwise.
+  Offset _perimeterAnchor(Rect body, Offset target, CalloutKind kind) {
+    if (kind == CalloutKind.oval || kind == CalloutKind.thoughtCloud) {
+      // Cast a ray from center to target; intersect with the ellipse.
+      final Offset c = body.center;
+      final double rx = body.width / 2;
+      final double ry = body.height / 2;
+      final double dx = target.dx - c.dx;
+      final double dy = target.dy - c.dy;
+      // Parameter t such that (t*dx/rx)^2 + (t*dy/ry)^2 = 1
+      final double denom =
+          math.sqrt((dx * dx) / (rx * rx) + (dy * dy) / (ry * ry));
+      if (denom == 0) return c;
+      final double t = 1 / denom;
+      return Offset(c.dx + dx * t, c.dy + dy * t);
+    }
+    // Default — rectangular shapes: clamp to the nearest edge.
+    final double clampedX = target.dx.clamp(body.left, body.right);
+    final double clampedY = target.dy.clamp(body.top, body.bottom);
+    final double dxOut = (target.dx - clampedX).abs();
+    final double dyOut = (target.dy - clampedY).abs();
+    final bool anchorVertical = dxOut > dyOut;
+    if (anchorVertical) {
+      final double x = target.dx < body.center.dx ? body.left : body.right;
+      return Offset(x, clampedY);
+    } else {
+      final double y = target.dy < body.center.dy ? body.top : body.bottom;
+      return Offset(clampedX, y);
+    }
+  }
+
+  /// Thought-cloud "tail" = a couple of shrinking bumps between the bubble
+  /// edge and the target.
+  Path _thoughtTrail(Rect body, Offset target) {
+    final Path p = Path();
+    if (body.deflate(2).contains(target)) return p;
+    final Offset start =
+        _perimeterAnchor(body, target, CalloutKind.thoughtCloud);
+    final Offset toTarget = target - start;
     final double dist = toTarget.distance;
-    if (dist < 6) return;
+    if (dist < 8) return p;
     for (int i = 1; i <= 2; i++) {
       final double t = i / 3.0;
-      final Offset c = edge + toTarget * t;
-      final double r = math.min(body.width, body.height) * (0.06 - i * 0.018);
-      canvas.drawCircle(c, r, fillPaint);
-      if (strokePaint != null) canvas.drawCircle(c, r, strokePaint);
+      final Offset c = start + toTarget * t;
+      final double r = math.min(body.width, body.height) * (0.075 - i * 0.02);
+      if (r <= 1) continue;
+      p.addOval(Rect.fromCircle(center: c, radius: r));
     }
+    return p;
   }
 
   @override
