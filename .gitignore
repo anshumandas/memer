@@ -29,3 +29,4 @@ linux/
 
 # Claude Code — keep .claude/ committed, but not personal overrides
 .claude/settings.local.json
+.claude/.session-start

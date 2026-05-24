@@ -3,16 +3,80 @@
     "allow": [
       "Bash(flutter:*)",
       "Bash(dart:*)",
+
       "Bash(git status)",
+      "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git blame:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git config --get:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git checkout:*)",
+      "Bash(git switch:*)",
+      "Bash(git branch:*)",
+      "Bash(git stash:*)",
+      "Bash(git fetch:*)",
+      "Bash(git pull:*)",
+      "Bash(git merge:*)",
+      "Bash(git rebase:*)",
+      "Bash(git restore:*)",
+      "Bash(git remote:*)",
+      "Bash(git tag:*)",
+      "Bash(git push)",
+      "Bash(git push origin:*)",
+
+      "Bash(gh pr:*)",
+      "Bash(gh issue:*)",
+      "Bash(gh repo view:*)",
+      "Bash(gh api:*)",
+      "Bash(gh auth status)",
+
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(yarn:*)",
+      "Bash(pnpm:*)",
+      "Bash(node:*)",
+
+      "Bash(ls:*)",
+      "Bash(pwd)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(echo:*)",
+      "Bash(mkdir:*)",
+      "Bash(touch:*)",
+      "Bash(which:*)",
+      "Bash(where:*)",
+      "Bash(find:*)",
+      "Bash(jq:*)",
+      "Bash(true)",
+
       "Read",
-      "Edit"
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "WebFetch",
+      "WebSearch"
     ],
     "deny": [
       "Read(.env)",
       "Read(**/*.keystore)",
-      "Read(**/*.jks)"
+      "Read(**/*.jks)",
+
+      "Bash(rm -rf:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push --force-with-lease:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean -fd:*)",
+      "Bash(git clean -fdx:*)",
+      "Bash(git branch -D:*)"
     ]
   },
   "hooks": {
@@ -23,6 +87,30 @@
           {
             "type": "command",
             "command": "dart format . >/dev/null 2>&1 || true"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "powershell",
+            "command": "$ts = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); Set-Content -Path '.claude/.session-start' -Value $ts -Encoding ASCII"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "agent",
+            "model": "claude-haiku-4-5-20251001",
+            "timeout": 120,
+            "statusMessage": "Summarising session into README.md…",
+            "prompt": "You are running as a SessionEnd hook for the memer project. Your job is to update a session-log section in README.md with a short summary of work that shipped this session.\n\nSteps (perform them in order; stop early when instructed):\n\n1. Read .claude/.session-start to get an ISO 8601 UTC timestamp marking when this session began. If the file is missing or unreadable, fall back to '1 hour ago'. Call this value $SINCE.\n\n2. Gather what changed in this session by running, via Bash:\n   - git log --since=\"$SINCE\" --pretty=format:'%h %s'\n   - git status --porcelain\n   - If commits exist: git diff --stat HEAD~$(git log --since=\"$SINCE\" --oneline | wc -l)..HEAD\n\n3. **GATE — skip if nothing happened.** If BOTH `git log --since` is empty AND `git status --porcelain` is empty, exit immediately. Write nothing, edit nothing, print nothing.\n\n4. Otherwise read README.md. Locate the managed section delimited by these exact HTML comment markers:\n   <!-- session-log:start -->\n   <!-- session-log:end -->\n   If the markers do not exist, append the following to the end of README.md (one blank line above):\n   ## Session log\n   <!-- session-log:start -->\n   <!-- session-log:end -->\n\n5. Inside the managed section, PREPEND (do not replace existing entries) a new entry of the form:\n   ### <UTC timestamp, format: YYYY-MM-DD HH:MM UTC>\n   - 3 to 5 bullets summarising what shipped — grounded strictly in the git output you collected. One short sentence per bullet.\n   - If a change is purely cosmetic (whitespace, formatting), omit it.\n   - Do NOT invent work that isn't in the diff or commit log. Do NOT speculate about intent.\n\n6. Hard constraints:\n   - Modify ONLY the text between the start and end markers (plus, on first run, the two-line marker block + the '## Session log' heading itself).\n   - Do NOT git add. Do NOT git commit. Do NOT run any destructive git command.\n   - Do NOT print to stdout on success. Stay silent.\n\n7. If anything fails (README missing, git unavailable, etc.), exit 0 silently — never block session shutdown."
           }
         ]
       }
