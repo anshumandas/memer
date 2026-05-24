@@ -95,7 +95,7 @@ class _LayerRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: selected ? accent.withOpacity(0.12) : Colors.transparent,
+        color: selected ? accent.withValues(alpha: 0.12) : Colors.transparent,
         border: Border(
           left: BorderSide(
             color: selected ? accent : Colors.transparent,
@@ -133,9 +133,8 @@ class _LayerRow extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color:
-                                Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   ],
                 ),
@@ -192,7 +191,7 @@ class _LayerRow extends StatelessWidget {
   String _previewFor(Layer l) {
     switch (l) {
       case BackgroundLayer():
-        return '#${l.color.value.toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
+        return '#${l.color.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
       case TextLayer():
         return l.text.isEmpty ? '(empty)' : l.text;
       case HyperlinkLayer():

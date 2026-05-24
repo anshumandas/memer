@@ -130,7 +130,10 @@ class _LayerSelectionOverlayState extends State<LayerSelectionOverlay> {
   // ------------------------------------------------------------- handles
 
   List<Widget> _buildHandlesFor(
-      BuildContext context, Layer layer, Size canvasSize) {
+    BuildContext context,
+    Layer layer,
+    Size canvasSize,
+  ) {
     final double w = layer.size.width * canvasSize.width;
     final double h = layer.size.height * canvasSize.height;
     final double cx = layer.position.dx * canvasSize.width;
@@ -177,11 +180,11 @@ class _LayerSelectionOverlayState extends State<LayerSelectionOverlay> {
             // 4 corner resize handles.
             for (final ({double dxSign, double dySign}) corner
                 in const <({double dxSign, double dySign})>[
-              (dxSign: -1, dySign: -1),
-              (dxSign: 1, dySign: -1),
-              (dxSign: -1, dySign: 1),
-              (dxSign: 1, dySign: 1),
-            ])
+                  (dxSign: -1, dySign: -1),
+                  (dxSign: 1, dySign: -1),
+                  (dxSign: -1, dySign: 1),
+                  (dxSign: 1, dySign: 1),
+                ])
               _CornerHandle(
                 color: scheme.primary,
                 left: corner.dxSign < 0 ? -8 : null,
@@ -218,8 +221,10 @@ class _LayerSelectionOverlayState extends State<LayerSelectionOverlay> {
                   final Offset? p = _toCanvas(d.globalPosition);
                   if (p == null) return;
                   final Offset center = Offset(cx, cy);
-                  _rotateStartAngle =
-                      math.atan2(p.dy - center.dy, p.dx - center.dx);
+                  _rotateStartAngle = math.atan2(
+                    p.dy - center.dy,
+                    p.dx - center.dx,
+                  );
                   _rotateStartLayerRotation =
                       widget.controller.selectedLayer?.rotation ?? 0;
                 },
@@ -228,8 +233,10 @@ class _LayerSelectionOverlayState extends State<LayerSelectionOverlay> {
                   final Offset? p = _toCanvas(d.globalPosition);
                   if (p == null) return;
                   final Offset center = Offset(cx, cy);
-                  final double now =
-                      math.atan2(p.dy - center.dy, p.dx - center.dx);
+                  final double now = math.atan2(
+                    p.dy - center.dy,
+                    p.dx - center.dx,
+                  );
                   final double delta = now - _rotateStartAngle!;
                   widget.controller.rotateLayer(
                     layer.id,
@@ -247,39 +254,45 @@ class _LayerSelectionOverlayState extends State<LayerSelectionOverlay> {
     final List<Widget> widgets = <Widget>[rotatedHandles];
 
     if (layer is CalloutLayer && layer.showTail) {
-      widgets.add(_TailTargetHandle(
-        canvasSize: canvasSize,
-        target: layer.tailTarget,
-        color: scheme.tertiary,
-        onStart: (DragStartDetails d) {
-          final Offset? p = _toCanvas(d.globalPosition);
-          if (p == null) return;
-          _tailStartPointerCanvas = p;
-          _tailStartTarget = layer.tailTarget;
-        },
-        onUpdate: (DragUpdateDetails d) {
-          if (_tailStartPointerCanvas == null || _tailStartTarget == null) {
-            return;
-          }
-          final Offset? p = _toCanvas(d.globalPosition);
-          if (p == null) return;
-          final Offset deltaPx = p - _tailStartPointerCanvas!;
-          final Offset next = Offset(
-            (_tailStartTarget!.dx + deltaPx.dx / canvasSize.width)
-                .clamp(0.0, 1.0),
-            (_tailStartTarget!.dy + deltaPx.dy / canvasSize.height)
-                .clamp(0.0, 1.0),
-          );
-          widget.controller.updateLayer(
-            layer.id,
-            (Layer l) => (l as CalloutLayer).copyWith(tailTarget: next),
-          );
-        },
-        onEnd: () {
-          _tailStartPointerCanvas = null;
-          _tailStartTarget = null;
-        },
-      ));
+      widgets.add(
+        _TailTargetHandle(
+          canvasSize: canvasSize,
+          target: layer.tailTarget,
+          color: scheme.tertiary,
+          onStart: (DragStartDetails d) {
+            final Offset? p = _toCanvas(d.globalPosition);
+            if (p == null) return;
+            _tailStartPointerCanvas = p;
+            _tailStartTarget = layer.tailTarget;
+          },
+          onUpdate: (DragUpdateDetails d) {
+            if (_tailStartPointerCanvas == null || _tailStartTarget == null) {
+              return;
+            }
+            final Offset? p = _toCanvas(d.globalPosition);
+            if (p == null) return;
+            final Offset deltaPx = p - _tailStartPointerCanvas!;
+            final Offset next = Offset(
+              (_tailStartTarget!.dx + deltaPx.dx / canvasSize.width).clamp(
+                0.0,
+                1.0,
+              ),
+              (_tailStartTarget!.dy + deltaPx.dy / canvasSize.height).clamp(
+                0.0,
+                1.0,
+              ),
+            );
+            widget.controller.updateLayer(
+              layer.id,
+              (Layer l) => (l as CalloutLayer).copyWith(tailTarget: next),
+            );
+          },
+          onEnd: () {
+            _tailStartPointerCanvas = null;
+            _tailStartTarget = null;
+          },
+        ),
+      );
     }
 
     return widgets;
@@ -326,9 +339,10 @@ class _LayerSelectionOverlayState extends State<LayerSelectionOverlay> {
     final double newW =
         (_resizeStartLayerSize!.width + (local.dx / canvasSize.width) * dxSign)
             .clamp(0.04, 1.0);
-    final double newH = (_resizeStartLayerSize!.height +
-            (local.dy / canvasSize.height) * dySign)
-        .clamp(0.04, 1.0);
+    final double newH =
+        (_resizeStartLayerSize!.height +
+                (local.dy / canvasSize.height) * dySign)
+            .clamp(0.04, 1.0);
 
     // The opposite corner stays anchored; the centre shifts by half of the
     // size delta (in the rotated frame), rotated back into canvas space.
@@ -365,17 +379,27 @@ class _SelectionBoxPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final Paint p = Paint()
-      ..color = color.withOpacity(0.9)
+      ..color = color.withValues(alpha: 0.9)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
     const double dash = 6;
     const double gap = 4;
     final Path path = Path();
     _dashedLine(path, Offset.zero, Offset(size.width, 0), dash, gap);
-    _dashedLine(path, Offset(size.width, 0), Offset(size.width, size.height),
-        dash, gap);
-    _dashedLine(path, Offset(size.width, size.height), Offset(0, size.height),
-        dash, gap);
+    _dashedLine(
+      path,
+      Offset(size.width, 0),
+      Offset(size.width, size.height),
+      dash,
+      gap,
+    );
+    _dashedLine(
+      path,
+      Offset(size.width, size.height),
+      Offset(0, size.height),
+      dash,
+      gap,
+    );
     _dashedLine(path, Offset(0, size.height), Offset.zero, dash, gap);
     canvas.drawPath(path, p);
   }
@@ -441,7 +465,7 @@ class _CornerHandle extends StatelessWidget {
               border: Border.all(color: color, width: 2),
               boxShadow: <BoxShadow>[
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.18),
+                  color: Colors.black.withValues(alpha: 0.18),
                   blurRadius: 2,
                   offset: const Offset(0, 1),
                 ),
@@ -485,7 +509,7 @@ class _RotateHandle extends StatelessWidget {
             border: Border.all(color: color, width: 2),
             boxShadow: <BoxShadow>[
               BoxShadow(
-                color: Colors.black.withOpacity(0.18),
+                color: Colors.black.withValues(alpha: 0.18),
                 blurRadius: 3,
                 offset: const Offset(0, 1),
               ),
@@ -532,12 +556,12 @@ class _TailTargetHandle extends StatelessWidget {
             width: r,
             height: r,
             decoration: BoxDecoration(
-              color: color.withOpacity(0.85),
+              color: color.withValues(alpha: 0.85),
               shape: BoxShape.circle,
               border: Border.all(color: Colors.white, width: 2),
               boxShadow: <BoxShadow>[
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.25),
+                  color: Colors.black.withValues(alpha: 0.25),
                   blurRadius: 3,
                   offset: const Offset(0, 1),
                 ),

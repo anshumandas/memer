@@ -63,8 +63,10 @@ class _EditorScreenState extends State<EditorScreen> {
       await WidgetsBinding.instance.endOfFrame;
 
       final Uint8List bytes = await _exporter.capturePng(_repaintKey);
-      final PostResult result =
-          await poster.post(imageBytes: bytes, caption: _composeCaption());
+      final PostResult result = await poster.post(
+        imageBytes: bytes,
+        caption: _composeCaption(),
+      );
       _snack(result.message ?? (result.isSuccess ? 'Done!' : 'Failed.'));
     } catch (e) {
       _snack('Something went wrong: $e');
@@ -164,17 +166,11 @@ class _EditorScreenState extends State<EditorScreen> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        SizedBox(
-          width: 260,
-          child: LayersPanel(controller: _controller),
-        ),
+        SizedBox(width: 260, child: LayersPanel(controller: _controller)),
         const VerticalDivider(width: 1),
         Expanded(child: _buildCanvasArea()),
         const VerticalDivider(width: 1),
-        SizedBox(
-          width: 340,
-          child: InspectorPanel(controller: _controller),
-        ),
+        SizedBox(width: 340, child: InspectorPanel(controller: _controller)),
       ],
     );
   }
@@ -184,10 +180,7 @@ class _EditorScreenState extends State<EditorScreen> {
       length: 2,
       child: Column(
         children: <Widget>[
-          Expanded(
-            flex: 5,
-            child: _buildCanvasArea(),
-          ),
+          Expanded(flex: 5, child: _buildCanvasArea()),
           const Divider(height: 1),
           Material(
             color: Theme.of(context).colorScheme.surface,
@@ -223,7 +216,7 @@ class _EditorScreenState extends State<EditorScreen> {
               borderRadius: BorderRadius.circular(8),
               boxShadow: <BoxShadow>[
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.18),
+                  color: Colors.black.withValues(alpha: 0.18),
                   blurRadius: 18,
                   offset: const Offset(0, 8),
                 ),
@@ -233,10 +226,7 @@ class _EditorScreenState extends State<EditorScreen> {
               borderRadius: BorderRadius.circular(8),
               child: Stack(
                 children: <Widget>[
-                  MemeCanvas(
-                    controller: _controller,
-                    repaintKey: _repaintKey,
-                  ),
+                  MemeCanvas(controller: _controller, repaintKey: _repaintKey),
                   Positioned.fill(
                     child: LayerSelectionOverlay(controller: _controller),
                   ),

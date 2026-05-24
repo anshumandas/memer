@@ -17,8 +17,9 @@ class MediaPickerService {
       mimeTypes: <String>['image/*'],
     );
 
-    final XFile? file =
-        await openFile(acceptedTypeGroups: const <XTypeGroup>[imageGroup]);
+    final XFile? file = await openFile(
+      acceptedTypeGroups: const <XTypeGroup>[imageGroup],
+    );
     if (file == null) return null; // cancelled
     return file.readAsBytes();
   }

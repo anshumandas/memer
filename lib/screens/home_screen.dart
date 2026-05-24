@@ -37,8 +37,9 @@ class HomeScreen extends StatelessWidget {
                 const SizedBox(height: 24),
                 Text(
                   'Meme Maker',
-                  style: text.headlineMedium
-                      ?.copyWith(fontWeight: FontWeight.bold),
+                  style: text.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 12),
@@ -47,8 +48,9 @@ class HomeScreen extends StatelessWidget {
                   'callout bubbles — drag them around, set opacity, and export '
                   'as a PNG or share to any app on your device. Everything '
                   'happens on-device.',
-                  style:
-                      text.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                  style: text.bodyMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 32),

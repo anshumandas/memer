@@ -70,8 +70,8 @@ class _Empty extends StatelessWidget {
       child: Text(
         message,
         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
       ),
     );
   }
@@ -190,8 +190,10 @@ class _TextInspectorState extends State<_TextInspector> {
   }
 
   void _patch(TextLayer Function(TextLayer) f) {
-    widget.controller
-        .updateLayer(widget.layer.id, (Layer l) => f(l as TextLayer));
+    widget.controller.updateLayer(
+      widget.layer.id,
+      (Layer l) => f(l as TextLayer),
+    );
   }
 
   @override
@@ -329,8 +331,10 @@ class _HyperlinkInspectorState extends State<_HyperlinkInspector> {
   }
 
   void _patch(HyperlinkLayer Function(HyperlinkLayer) f) {
-    widget.controller
-        .updateLayer(widget.layer.id, (Layer l) => f(l as HyperlinkLayer));
+    widget.controller.updateLayer(
+      widget.layer.id,
+      (Layer l) => f(l as HyperlinkLayer),
+    );
   }
 
   @override
@@ -447,8 +451,8 @@ class _HyperlinkInspectorState extends State<_HyperlinkInspector> {
             'PNGs can\'t carry a clickable link, so the URL is also appended '
             'to the share caption when you post.',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
         ],
       ),
@@ -469,10 +473,8 @@ class _ImageInspector extends StatelessWidget {
     if (bytes == null) return;
     controller.updateLayer(
       layer.id,
-      (Layer l) => (l as ImageLayer).copyWith(
-        bytes: bytes,
-        originalBytes: bytes,
-      ),
+      (Layer l) =>
+          (l as ImageLayer).copyWith(bytes: bytes, originalBytes: bytes),
     );
   }
 
@@ -525,8 +527,8 @@ class _ImageInspector extends StatelessWidget {
             'painter (brush + magic-wand). Drag corners on the main canvas to '
             'resize; use the rotate handle for free rotation.',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
         ],
       ),
@@ -567,8 +569,10 @@ class _CalloutInspectorState extends State<_CalloutInspector> {
   }
 
   void _patch(CalloutLayer Function(CalloutLayer) f) {
-    widget.controller
-        .updateLayer(widget.layer.id, (Layer l) => f(l as CalloutLayer));
+    widget.controller.updateLayer(
+      widget.layer.id,
+      (Layer l) => f(l as CalloutLayer),
+    );
   }
 
   @override
@@ -684,7 +688,8 @@ class _CalloutInspectorState extends State<_CalloutInspector> {
             contentPadding: EdgeInsets.zero,
             title: const Text('Show tail'),
             subtitle: const Text(
-                'Drag the small circle on the canvas to point the tail.'),
+              'Drag the small circle on the canvas to point the tail.',
+            ),
             value: l.showTail,
             onChanged: (bool v) =>
                 _patch((CalloutLayer c) => c.copyWith(showTail: v)),
@@ -727,11 +732,12 @@ class _Section extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text(title,
-                style: Theme.of(context)
-                    .textTheme
-                    .titleSmall
-                    ?.copyWith(fontWeight: FontWeight.bold)),
+            Text(
+              title,
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 12),
             child,
           ],
@@ -757,7 +763,7 @@ class _Swatch extends StatelessWidget {
         decoration: BoxDecoration(
           color: color,
           borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: Colors.black.withOpacity(0.25)),
+          border: Border.all(color: Colors.black.withValues(alpha: 0.25)),
         ),
       ),
     );
@@ -772,7 +778,9 @@ class _FontDropdown extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DropdownButtonFormField<String>(
-      value: kAvailableFonts.contains(value) ? value : kAvailableFonts.first,
+      initialValue: kAvailableFonts.contains(value)
+          ? value
+          : kAvailableFonts.first,
       decoration: const InputDecoration(
         labelText: 'Font',
         border: OutlineInputBorder(),

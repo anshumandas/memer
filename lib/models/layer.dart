@@ -99,10 +99,10 @@ class BackgroundLayer extends Layer {
     super.opacity,
     this.color = const Color(0xFF1E1E1E),
   }) : super(
-          position: const Offset(0.5, 0.5),
-          size: const Size(1.0, 1.0),
-          rotation: 0,
-        );
+         position: const Offset(0.5, 0.5),
+         size: const Size(1.0, 1.0),
+         rotation: 0,
+       );
 
   final Color color;
 
@@ -397,8 +397,9 @@ class ImageLayer extends Layer {
       size: size ?? this.size,
       rotation: rotation ?? this.rotation,
       bytes: bytes ?? this.bytes,
-      originalBytes:
-          clearOriginal ? null : (originalBytes ?? this.originalBytes),
+      originalBytes: clearOriginal
+          ? null
+          : (originalBytes ?? this.originalBytes),
     );
   }
 
@@ -563,8 +564,6 @@ extension OffsetClamp on Offset {
 }
 
 extension SizeClamp on Size {
-  Size clamp01({double minSide = 0.04}) => Size(
-        width.clamp(minSide, 1.0),
-        height.clamp(minSide, 1.0),
-      );
+  Size clamp01({double minSide = 0.04}) =>
+      Size(width.clamp(minSide, 1.0), height.clamp(minSide, 1.0));
 }

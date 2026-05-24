@@ -1,20 +1,30 @@
 // Web implementation: trigger a browser download of the PNG bytes.
 //
 // Only compiled on the web (selected via the conditional import in
-// image_export_service.dart), so `dart:html` never reaches native builds.
-// ignore: avoid_web_libraries_in_flutter
-import 'dart:html' as html;
+// image_export_service.dart), so this file is never reachable on native
+// builds. Uses `package:web` + `dart:js_interop` (the modern replacement
+// for the deprecated `dart:html`).
+import 'dart:js_interop';
 import 'dart:typed_data';
 
+import 'package:web/web.dart' as web;
+
 Future<String?> savePng(Uint8List bytes, String suggestedName) async {
-  final html.Blob blob = html.Blob(<Object>[bytes], 'image/png');
-  final String url = html.Url.createObjectUrlFromBlob(blob);
-  final html.AnchorElement anchor = html.AnchorElement(href: url)
-    ..download = suggestedName
-    ..style.display = 'none';
-  html.document.body?.append(anchor);
+  // `Blob`'s first arg is a JSArray of blob parts. A `Uint8List` becomes a
+  // JS typed array via `.toJS`, then we wrap it in a one-element JS array.
+  final web.Blob blob = web.Blob(
+    <JSAny>[bytes.toJS].toJS,
+    web.BlobPropertyBag(type: 'image/png'),
+  );
+  final String url = web.URL.createObjectURL(blob);
+  final web.HTMLAnchorElement anchor =
+      web.document.createElement('a') as web.HTMLAnchorElement
+        ..href = url
+        ..download = suggestedName
+        ..style.display = 'none';
+  web.document.body?.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  html.Url.revokeObjectUrl(url);
+  web.URL.revokeObjectURL(url);
   return suggestedName;
 }

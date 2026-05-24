@@ -38,9 +38,14 @@ class ShareSheetPoster implements SocialPoster {
         name: 'meme.png',
       );
 
-      final ShareResult result = await Share.shareXFiles(
-        <XFile>[file],
-        text: caption.trim().isEmpty ? null : caption,
+      // share_plus v12+ API: build a [ShareParams] and call
+      // [SharePlus.instance.share]. The legacy [Share.shareXFiles] is removed
+      // in v12; this is the supported entry point.
+      final ShareResult result = await SharePlus.instance.share(
+        ShareParams(
+          files: <XFile>[file],
+          text: caption.trim().isEmpty ? null : caption,
+        ),
       );
 
       switch (result.status) {
@@ -54,14 +59,16 @@ class ShareSheetPoster implements SocialPoster {
         case ShareResultStatus.unavailable:
           return const PostResult(
             PostOutcome.failed,
-            message: 'The share sheet is not available on this platform. '
+            message:
+                'The share sheet is not available on this platform. '
                 'Try "Save image…" instead.',
           );
       }
     } catch (e) {
       return PostResult(
         PostOutcome.failed,
-        message: 'Could not open the share sheet ($e). '
+        message:
+            'Could not open the share sheet ($e). '
             'Try "Save image…" instead.',
       );
     }

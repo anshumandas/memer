@@ -14,11 +14,7 @@ class MemeController extends ChangeNotifier {
       _config = initial;
     } else {
       // Seed with a single background layer so the canvas is never empty.
-      _config = MemeConfig(
-        layers: <Layer>[
-          BackgroundLayer(id: _nextId('bg')),
-        ],
-      );
+      _config = MemeConfig(layers: <Layer>[BackgroundLayer(id: _nextId('bg'))]);
     }
   }
 
@@ -60,9 +56,7 @@ class MemeController extends ChangeNotifier {
   }
 
   String addTextLayer({String? text}) {
-    return addLayer(
-      TextLayer(id: _nextId('text'), text: text ?? 'New text'),
-    );
+    return addLayer(TextLayer(id: _nextId('text'), text: text ?? 'New text'));
   }
 
   String addHyperlinkLayer({String? url}) {
@@ -116,8 +110,9 @@ class MemeController extends ChangeNotifier {
   /// per-layer edit so the controller can also re-emit notifications.
   void updateLayer(String id, Layer Function(Layer) update) {
     _config = _config.copyWith(
-      layers:
-          _config.layers.map((Layer l) => l.id == id ? update(l) : l).toList(),
+      layers: _config.layers
+          .map((Layer l) => l.id == id ? update(l) : l)
+          .toList(),
     );
     notifyListeners();
   }

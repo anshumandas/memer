@@ -512,11 +512,11 @@ class _CropOverlay extends StatelessWidget {
   final ValueChanged<Rect> onChange;
 
   Rect _displayRect() => Rect.fromLTWH(
-        rect.left * displaySize.width,
-        rect.top * displaySize.height,
-        rect.width * displaySize.width,
-        rect.height * displaySize.height,
-      );
+    rect.left * displaySize.width,
+    rect.top * displaySize.height,
+    rect.width * displaySize.width,
+    rect.height * displaySize.height,
+  );
 
   void _move(Offset deltaPx) {
     final double dx = deltaPx.dx / displaySize.width;
@@ -578,11 +578,11 @@ class _CropOverlay extends StatelessWidget {
         // 4 corner handles.
         for (final ({double dxSign, double dySign}) corner
             in const <({double dxSign, double dySign})>[
-          (dxSign: -1, dySign: -1),
-          (dxSign: 1, dySign: -1),
-          (dxSign: -1, dySign: 1),
-          (dxSign: 1, dySign: 1),
-        ])
+              (dxSign: -1, dySign: -1),
+              (dxSign: 1, dySign: -1),
+              (dxSign: -1, dySign: 1),
+              (dxSign: 1, dySign: 1),
+            ])
           Positioned(
             left: corner.dxSign < 0 ? r.left - 10 : r.right - 10,
             top: corner.dySign < 0 ? r.top - 10 : r.bottom - 10,
@@ -838,10 +838,7 @@ class _MaskCompositePainter extends CustomPainter {
       bool row = toggle;
       for (double x = rect.left; x < rect.right; x += tile) {
         if (row) {
-          canvas.drawRect(
-            Rect.fromLTWH(x, y, tile, tile),
-            a,
-          );
+          canvas.drawRect(Rect.fromLTWH(x, y, tile, tile), a);
         }
         row = !row;
       }

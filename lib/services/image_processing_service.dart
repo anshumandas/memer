@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/painting.dart';
 import 'package:image/image.dart' as img;
 
@@ -25,10 +26,10 @@ class FloodMask {
 /// crop, 90° rotate, magic-wand flood fill, and baking brush erasures +
 /// flood masks into a final transparent PNG.
 ///
-/// Everything runs on the main isolate for v1. For meme-sized images
-/// (≤ ~2 MP) this is fast enough; if it ever becomes a bottleneck the
-/// service is structured so the heavy methods can be moved into a
-/// `compute()` call without changing callers.
+/// Crop / rotate run on the main isolate (one-shot, cheap). The magic-wand
+/// flood fill walks every connected pixel and can hit millions of nodes on
+/// a multi-megapixel image, so it is dispatched to a background isolate via
+/// [compute] to keep the UI responsive.
 class ImageProcessingService {
   const ImageProcessingService();
 
@@ -58,12 +59,21 @@ class ImageProcessingService {
     if (src == null) return bytes;
     final int x = (srcFractional.left * src.width).round().clamp(0, src.width);
     final int y = (srcFractional.top * src.height).round().clamp(0, src.height);
-    final int w =
-        (srcFractional.width * src.width).round().clamp(1, src.width - x);
-    final int h =
-        (srcFractional.height * src.height).round().clamp(1, src.height - y);
-    final img.Image cropped =
-        img.copyCrop(src, x: x, y: y, width: w, height: h);
+    final int w = (srcFractional.width * src.width).round().clamp(
+      1,
+      src.width - x,
+    );
+    final int h = (srcFractional.height * src.height).round().clamp(
+      1,
+      src.height - y,
+    );
+    final img.Image cropped = img.copyCrop(
+      src,
+      x: x,
+      y: y,
+      width: w,
+      height: h,
+    );
     return Uint8List.fromList(img.encodePng(cropped));
   }
 
@@ -86,56 +96,21 @@ class ImageProcessingService {
   /// The returned [FloodMask] has the same dimensions as the source image
   /// (not the on-screen canvas) — paint/erase ops in the editor convert
   /// pointer positions into image pixels before invoking this.
+  ///
+  /// Runs in a background isolate via [compute] so a multi-megapixel fill
+  /// never blocks the UI thread.
   Future<FloodMask> floodFill(
     Uint8List bytes,
     int seedX,
     int seedY, {
     int tolerance = 60,
   }) async {
-    final img.Image? src = img.decodeImage(bytes);
-    if (src == null) {
-      return FloodMask(bytes: Uint8List(0), width: 0, height: 0);
-    }
-    final int w = src.width;
-    final int h = src.height;
-    if (seedX < 0 || seedY < 0 || seedX >= w || seedY >= h) {
-      return FloodMask(bytes: Uint8List(w * h), width: w, height: h);
-    }
-    final img.Pixel seedPx = src.getPixel(seedX, seedY);
-    final int sr = seedPx.r.toInt();
-    final int sg = seedPx.g.toInt();
-    final int sb = seedPx.b.toInt();
-
-    final Uint8List mask = Uint8List(w * h);
-    // BFS queue stored as a Uint32List for memory efficiency on big images.
-    final List<int> stack = <int>[seedY * w + seedX];
-    mask[seedY * w + seedX] = 255;
-
-    while (stack.isNotEmpty) {
-      final int idx = stack.removeLast();
-      final int x = idx % w;
-      final int y = idx ~/ w;
-      for (final ({int dx, int dy}) delta in const <({int dx, int dy})>[
-        (dx: -1, dy: 0),
-        (dx: 1, dy: 0),
-        (dx: 0, dy: -1),
-        (dx: 0, dy: 1),
-      ]) {
-        final int nx = x + delta.dx;
-        final int ny = y + delta.dy;
-        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-        final int nIdx = ny * w + nx;
-        if (mask[nIdx] != 0) continue;
-        final img.Pixel p = src.getPixel(nx, ny);
-        final int diff = (p.r.toInt() - sr).abs() +
-            (p.g.toInt() - sg).abs() +
-            (p.b.toInt() - sb).abs();
-        if (diff <= tolerance) {
-          mask[nIdx] = 255;
-          stack.add(nIdx);
-        }
-      }
-    }
+    final (Uint8List mask, int w, int h) = await compute(_floodFillIsolate, (
+      bytes,
+      seedX,
+      seedY,
+      tolerance,
+    ));
     return FloodMask(bytes: mask, width: w, height: h);
   }
 
@@ -158,8 +133,10 @@ class ImageProcessingService {
     final int h = source.height;
 
     final ui.PictureRecorder recorder = ui.PictureRecorder();
-    final Canvas canvas =
-        Canvas(recorder, Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()));
+    final Canvas canvas = Canvas(
+      recorder,
+      Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+    );
 
     // Use a saveLayer so the dstOut erase ops operate on the source image
     // and *only* that layer (otherwise they would also erase whatever is
@@ -192,8 +169,9 @@ class ImageProcessingService {
     picture.dispose();
     source.dispose();
 
-    final ByteData? png =
-        await rendered.toByteData(format: ui.ImageByteFormat.png);
+    final ByteData? png = await rendered.toByteData(
+      format: ui.ImageByteFormat.png,
+    );
     rendered.dispose();
     if (png == null) {
       throw StateError('Could not encode the edited image as PNG.');
@@ -218,4 +196,71 @@ class ImageProcessingService {
     );
     return c.future;
   }
+}
+
+/// Entry point for [ImageProcessingService.floodFill]'s background isolate.
+///
+/// Decodes the PNG, normalises to RGBA8 so we can read pixels via raw byte
+/// indexing (the `image` package's `getPixel` is an order of magnitude slower
+/// — it allocates a `Pixel` wrapper per call, which is what used to hang the
+/// UI on big regions). Returns `(mask, width, height)` so the result can
+/// cross the isolate boundary without depending on the [FloodMask] class.
+(Uint8List, int, int) _floodFillIsolate((Uint8List, int, int, int) args) {
+  final Uint8List bytes = args.$1;
+  final int seedX = args.$2;
+  final int seedY = args.$3;
+  final int tolerance = args.$4;
+
+  final img.Image? decoded = img.decodeImage(bytes);
+  if (decoded == null) return (Uint8List(0), 0, 0);
+
+  final img.Image src =
+      (decoded.numChannels == 4 && decoded.format == img.Format.uint8)
+      ? decoded
+      : decoded.convert(numChannels: 4, format: img.Format.uint8);
+  final int w = src.width;
+  final int h = src.height;
+  final Uint8List pixels = src.getBytes(); // flat RGBA, length = w*h*4
+
+  if (seedX < 0 || seedY < 0 || seedX >= w || seedY >= h) {
+    return (Uint8List(w * h), w, h);
+  }
+
+  final int seedOff = (seedY * w + seedX) * 4;
+  final int sr = pixels[seedOff];
+  final int sg = pixels[seedOff + 1];
+  final int sb = pixels[seedOff + 2];
+
+  final Uint8List mask = Uint8List(w * h);
+  // Separate visited buffer so rejected pixels aren't retested from each
+  // matched neighbour (used to inflate the BFS by ~4x).
+  final Uint8List visited = Uint8List(w * h);
+  final List<int> stack = <int>[seedY * w + seedX];
+  mask[seedY * w + seedX] = 255;
+  visited[seedY * w + seedX] = 1;
+
+  while (stack.isNotEmpty) {
+    final int idx = stack.removeLast();
+    final int x = idx % w;
+    final int y = idx ~/ w;
+    // 4-connected neighbours, inlined to keep the hot loop tight.
+    for (int n = 0; n < 4; n++) {
+      final int nx = n == 0 ? x - 1 : (n == 1 ? x + 1 : x);
+      final int ny = n == 2 ? y - 1 : (n == 3 ? y + 1 : y);
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+      final int nIdx = ny * w + nx;
+      if (visited[nIdx] != 0) continue;
+      visited[nIdx] = 1;
+      final int off = nIdx * 4;
+      final int diff =
+          (pixels[off] - sr).abs() +
+          (pixels[off + 1] - sg).abs() +
+          (pixels[off + 2] - sb).abs();
+      if (diff <= tolerance) {
+        mask[nIdx] = 255;
+        stack.add(nIdx);
+      }
+    }
+  }
+  return (mask, w, h);
 }

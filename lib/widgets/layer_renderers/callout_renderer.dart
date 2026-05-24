@@ -119,10 +119,14 @@ class _CalloutPainter extends CustomPainter {
     }
 
     // Soft shadow so the bubble lifts off the underlying layers.
-    canvas.drawShadow(fullPath, Colors.black.withOpacity(0.32), 4, false);
+    canvas.drawShadow(fullPath, Colors.black.withValues(alpha: 0.32), 4, false);
     if (tailOverlayPath != null) {
       canvas.drawShadow(
-          tailOverlayPath, Colors.black.withOpacity(0.32), 2, false);
+        tailOverlayPath,
+        Colors.black.withValues(alpha: 0.32),
+        2,
+        false,
+      );
     }
 
     final Paint fillPaint = Paint()
@@ -160,11 +164,12 @@ class _CalloutPainter extends CustomPainter {
         return Path()
           ..addRRect(RRect.fromRectAndRadius(r, const Radius.circular(4)));
       case CalloutKind.speechRound:
-        return Path()
-          ..addRRect(RRect.fromRectAndRadius(
+        return Path()..addRRect(
+          RRect.fromRectAndRadius(
             r,
             Radius.circular(math.min(r.width, r.height) * 0.22),
-          ));
+          ),
+        );
       case CalloutKind.oval:
         return Path()..addOval(r);
       case CalloutKind.thoughtCloud:
@@ -189,18 +194,16 @@ class _CalloutPainter extends CustomPainter {
     final Path p = Path();
     for (int i = 0; i <= bumps; i++) {
       final double t = i / bumps * 2 * math.pi;
-      final Offset pt =
-          Offset(cx + math.cos(t) * baseRx, cy + math.sin(t) * baseRy);
+      final Offset pt = Offset(
+        cx + math.cos(t) * baseRx,
+        cy + math.sin(t) * baseRy,
+      );
       if (i == 0) {
         p.moveTo(pt.dx, pt.dy);
       } else {
         // Arc outward: clockwise:false makes the bulge sit on the *outside*
         // of the ellipse (away from the center).
-        p.arcToPoint(
-          pt,
-          radius: Radius.circular(bumpRadius),
-          clockwise: false,
-        );
+        p.arcToPoint(pt, radius: Radius.circular(bumpRadius), clockwise: false);
       }
     }
     p.close();
@@ -281,7 +284,8 @@ class _CalloutPainter extends CustomPainter {
 
     // The tail base spans perpendicular to the anchor→target direction,
     // centred on the anchor. Width scales with bubble size and shape.
-    final double baseHalf = math.min(body.width, body.height) *
+    final double baseHalf =
+        math.min(body.width, body.height) *
         (kind == CalloutKind.speechSharp ? 0.08 : 0.11);
     final Offset perp = Offset(-toTarget.dy / dist, toTarget.dx / dist);
     final Offset baseA = anchor + perp * baseHalf;
@@ -323,8 +327,9 @@ class _CalloutPainter extends CustomPainter {
       final double dx = target.dx - c.dx;
       final double dy = target.dy - c.dy;
       // Parameter t such that (t*dx/rx)^2 + (t*dy/ry)^2 = 1
-      final double denom =
-          math.sqrt((dx * dx) / (rx * rx) + (dy * dy) / (ry * ry));
+      final double denom = math.sqrt(
+        (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry),
+      );
       if (denom == 0) return c;
       final double t = 1 / denom;
       return Offset(c.dx + dx * t, c.dy + dy * t);
@@ -349,8 +354,11 @@ class _CalloutPainter extends CustomPainter {
   Path _thoughtTrail(Rect body, Offset target) {
     final Path p = Path();
     if (body.deflate(2).contains(target)) return p;
-    final Offset start =
-        _perimeterAnchor(body, target, CalloutKind.thoughtCloud);
+    final Offset start = _perimeterAnchor(
+      body,
+      target,
+      CalloutKind.thoughtCloud,
+    );
     final Offset toTarget = target - start;
     final double dist = toTarget.distance;
     if (dist < 8) return p;

@@ -1,14 +1,15 @@
 name: memer
 description: >-
-  A client-only Flutter app for making simple memes (background colour, text,
-  optional background image, and optional speech-bubble callouts) and sharing
-  them to any social network via the native share sheet. No backend required.
+  A client-only Flutter app for making layered memes (background, text,
+  hyperlinks, images, callout bubbles) with an in-app crop / rotate /
+  background-removal editor, then sharing the PNG to any social network
+  via the native share sheet. No backend required.
 publish_to: "none"
 version: 1.0.0+1
 
 environment:
-  sdk: ">=3.3.0 <4.0.0"
-  flutter: ">=3.19.0"
+  sdk: ">=3.9.0 <4.0.0"
+  flutter: ">=3.27.0"
 
 dependencies:
   flutter:
@@ -16,9 +17,10 @@ dependencies:
 
   # Native OS share sheet — posts to whatever app the user has installed
   # (Instagram, X, WhatsApp, Facebook, …) using their own logins.
-  share_plus: ^10.1.2
+  # Pinned to 12.x: 13+ requires Dart 3.10, but Flutter 3.35.x ships 3.9.
+  share_plus: ^12.0.0
 
-  # Cross-platform file picking for the optional background image.
+  # Cross-platform file picking for image layers / image-editor source.
   # file_selector works on Android, iOS, web, Windows, macOS and Linux.
   file_selector: ^1.0.3
 
@@ -33,12 +35,17 @@ dependencies:
   # Pure-Dart image processing — crops, bakes rotations, applies the alpha
   # mask produced by the background-removal painter. Works on every target
   # (no native plugins, no FFI), so the image tools stay cross-platform.
-  image: ^4.2.0
+  # Pinned to 4.8.x: 4.9+ requires a newer `meta` than the Flutter SDK ships.
+  image: ">=4.8.0 <4.9.0"
+
+  # Web Platform APIs (replaces the legacy `dart:html`). Used only inside a
+  # conditional import for the browser PNG-download saver.
+  web: ^1.1.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^4.0.0
+  flutter_lints: ^6.0.0
 
 flutter:
   uses-material-design: true

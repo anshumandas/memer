@@ -9,7 +9,8 @@ import 'package:flutter/widgets.dart';
 // a browser download. Conditional import keeps `dart:html` out of native
 // builds and `file_selector`'s unsupported-on-web save path out of web builds.
 import 'platform_saver_default.dart'
-    if (dart.library.html) 'platform_saver_web.dart' as saver;
+    if (dart.library.html) 'platform_saver_web.dart'
+    as saver;
 
 /// Turns the on-screen meme into PNG bytes and (optionally) writes them out.
 /// Pure client-side — nothing leaves the device unless the user shares it.
@@ -41,13 +42,15 @@ class ImageExportService {
     }
 
     final double logicalWidth = object.size.width;
-    final double pixelRatio =
-        logicalWidth <= 0 ? 3.0 : (targetWidth / logicalWidth).clamp(1.0, 6.0);
+    final double pixelRatio = logicalWidth <= 0
+        ? 3.0
+        : (targetWidth / logicalWidth).clamp(1.0, 6.0);
 
     final ui.Image image = await object.toImage(pixelRatio: pixelRatio);
     try {
-      final ByteData? data =
-          await image.toByteData(format: ui.ImageByteFormat.png);
+      final ByteData? data = await image.toByteData(
+        format: ui.ImageByteFormat.png,
+      );
       if (data == null) {
         throw StateError('Failed to encode the meme as PNG.');
       }

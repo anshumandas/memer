@@ -64,8 +64,9 @@ a sealed family with five variants:
 - Background layer is structural: the controller refuses to delete it or
   reorder anything below it. `BackgroundLayer.copyWithBase` ignores
   geometric edits — it's always full-bleed.
-- Use `withOpacity` and `Color.value` — SDK floor is 3.19; newer
-  `withValues` / `toARGB32` are not available there.
+- Use `Color.withValues(alpha: x)` (not the deprecated `withOpacity`) and
+  `Color.toARGB32()` (not the deprecated `Color.value`). Flutter floor is
+  3.27 — both APIs are available.
 - Platform code stays behind conditional imports (`if (dart.library.html)`);
   never import `dart:io` or `dart:html` in shared code.
 - Posters must NOT throw — return a `PostResult`.

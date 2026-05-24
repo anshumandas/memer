@@ -17,18 +17,16 @@ import 'layer_renderers/text_renderer.dart';
 ///
 /// The canvas owns its own [ListenableBuilder] so a layer drag re-renders
 /// the canvas without forcing the whole editor (layers panel, inspector,
-/// scaffold) to rebuild. Each individual layer is also wrapped in a
-/// [RepaintBoundary] so sibling layers don't repaint when one moves.
+/// scaffold) to rebuild. Each individual layer is wrapped in its own
+/// [RepaintBoundary] (placed *inside* the [Positioned], so the Positioned
+/// stays a direct child of [Stack] — otherwise Flutter throws "Incorrect
+/// use of ParentDataWidget").
 ///
 /// This widget deliberately knows nothing about selection / drag / resize
 /// affordances. Those live in a sibling overlay (`LayerSelectionOverlay`)
 /// so the handles never end up in the exported pixels.
 class MemeCanvas extends StatelessWidget {
-  const MemeCanvas({
-    super.key,
-    required this.controller,
-    this.repaintKey,
-  });
+  const MemeCanvas({super.key, required this.controller, this.repaintKey});
 
   final MemeController controller;
 
@@ -53,14 +51,7 @@ class MemeCanvas extends StatelessWidget {
                     fit: StackFit.expand,
                     children: <Widget>[
                       for (final Layer layer in config.layers)
-                        if (layer.visible)
-                          RepaintBoundary(
-                            key: ValueKey<String>(layer.id),
-                            child: _LayerHost(
-                              layer: layer,
-                              canvasSize: canvasSize,
-                            ),
-                          ),
+                        if (layer.visible) _positionedLayer(layer, canvasSize),
                     ],
                   );
                 },
@@ -71,22 +62,21 @@ class MemeCanvas extends StatelessWidget {
       },
     );
   }
-}
 
-/// Positions, rotates and opacity-wraps a single layer's renderer.
-class _LayerHost extends StatelessWidget {
-  const _LayerHost({required this.layer, required this.canvasSize});
-
-  final Layer layer;
-  final Size canvasSize;
-
-  @override
-  Widget build(BuildContext context) {
-    // Background layers ignore positioning — they always fill the canvas.
+  /// Builds the [Positioned] (or [Positioned.fill]) child for a single layer.
+  /// `Positioned` MUST be the direct child of the parent [Stack]; wrapping
+  /// it in another widget like [RepaintBoundary] would silently break stack
+  /// layout (and throw a ParentDataWidget assert on the web).
+  Widget _positionedLayer(Layer layer, Size canvasSize) {
     if (layer is BackgroundLayer) {
-      return Opacity(
-        opacity: layer.opacity,
-        child: BackgroundRenderer(layer: layer as BackgroundLayer),
+      return Positioned.fill(
+        key: ValueKey<String>(layer.id),
+        child: RepaintBoundary(
+          child: Opacity(
+            opacity: layer.opacity,
+            child: BackgroundRenderer(layer: layer),
+          ),
+        ),
       );
     }
 
@@ -95,18 +85,19 @@ class _LayerHost extends StatelessWidget {
     final double cx = layer.position.dx * canvasSize.width;
     final double cy = layer.position.dy * canvasSize.height;
 
-    final Widget child = _rendererFor(layer, canvasSize);
-
     return Positioned(
+      key: ValueKey<String>(layer.id),
       left: cx - w / 2,
       top: cy - h / 2,
       width: w,
       height: h,
-      child: Opacity(
-        opacity: layer.opacity,
-        child: Transform.rotate(
-          angle: layer.rotation,
-          child: child,
+      child: RepaintBoundary(
+        child: Opacity(
+          opacity: layer.opacity,
+          child: Transform.rotate(
+            angle: layer.rotation,
+            child: _rendererFor(layer, canvasSize),
+          ),
         ),
       ),
     );

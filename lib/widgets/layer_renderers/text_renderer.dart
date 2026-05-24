@@ -50,8 +50,9 @@ class TextRenderer extends StatelessWidget {
     }
 
     // Outline contrasts with the fill so it stays legible on any background.
-    final Color outlineColor =
-        layer.color.computeLuminance() > 0.5 ? Colors.black : Colors.white;
+    final Color outlineColor = layer.color.computeLuminance() > 0.5
+        ? Colors.black
+        : Colors.white;
     final double strokeWidth = (fontSize * 0.08).clamp(2.0, 8.0);
 
     final Widget stroked = Stack(

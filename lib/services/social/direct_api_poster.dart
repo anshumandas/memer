@@ -46,7 +46,8 @@ abstract class DirectApiPoster implements SocialPoster {
     );
     return PostResult(
       PostOutcome.failed,
-      message: 'Direct posting to $label needs a backend (OAuth). '
+      message:
+          'Direct posting to $label needs a backend (OAuth). '
           'Use "Share to apps…" for now.',
     );
   }

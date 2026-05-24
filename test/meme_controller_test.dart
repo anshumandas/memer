@@ -44,13 +44,17 @@ void main() {
       expect(moved.rotation, bg.rotation);
     });
 
-    test('CalloutLayer.shape uses CalloutKind, not the string discriminator',
-        () {
-      const CalloutLayer cl =
-          CalloutLayer(id: 'c', shape: CalloutKind.thoughtCloud);
-      expect(cl.shape, CalloutKind.thoughtCloud);
-      expect(cl.kind, 'callout'); // Layer-level string discriminator.
-    });
+    test(
+      'CalloutLayer.shape uses CalloutKind, not the string discriminator',
+      () {
+        const CalloutLayer cl = CalloutLayer(
+          id: 'c',
+          shape: CalloutKind.thoughtCloud,
+        );
+        expect(cl.shape, CalloutKind.thoughtCloud);
+        expect(cl.kind, 'callout'); // Layer-level string discriminator.
+      },
+    );
   });
 
   group('OffsetClamp / SizeClamp', () {
