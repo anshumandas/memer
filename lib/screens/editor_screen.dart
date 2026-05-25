@@ -1,6 +1,5 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/layer.dart';
 import '../models/meme_config.dart';
@@ -138,6 +137,32 @@ class _EditorScreenState extends State<EditorScreen> {
       appBar: AppBar(
         title: const Text('Editor'),
         actions: <Widget>[
+          // Undo/redo react to controller state — listen narrowly here so we
+          // don't rebuild the whole appbar on every drag tick.
+          ListenableBuilder(
+            listenable: _controller,
+            builder: (BuildContext context, _) {
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  IconButton(
+                    tooltip: 'Undo (Ctrl+Z)',
+                    onPressed: _busy || !_controller.canUndo
+                        ? null
+                        : _controller.undo,
+                    icon: const Icon(Icons.undo),
+                  ),
+                  IconButton(
+                    tooltip: 'Redo (Ctrl+Shift+Z)',
+                    onPressed: _busy || !_controller.canRedo
+                        ? null
+                        : _controller.redo,
+                    icon: const Icon(Icons.redo),
+                  ),
+                ],
+              );
+            },
+          ),
           _AspectMenu(controller: _controller),
           IconButton(
             tooltip: 'Save image',
@@ -157,12 +182,35 @@ class _EditorScreenState extends State<EditorScreen> {
           const SizedBox(width: 4),
         ],
       ),
-      body: LayoutBuilder(
-        builder: (BuildContext context, BoxConstraints constraints) {
-          final bool wide = constraints.maxWidth >= 980;
-          if (wide) return _buildWide(context);
-          return _buildNarrow(context);
+      body: CallbackShortcuts(
+        bindings: <ShortcutActivator, VoidCallback>{
+          const SingleActivator(LogicalKeyboardKey.keyZ, control: true):
+              _controller.undo,
+          const SingleActivator(LogicalKeyboardKey.keyZ, meta: true):
+              _controller.undo,
+          const SingleActivator(
+            LogicalKeyboardKey.keyZ,
+            control: true,
+            shift: true,
+          ): _controller.redo,
+          const SingleActivator(
+            LogicalKeyboardKey.keyZ,
+            meta: true,
+            shift: true,
+          ): _controller.redo,
+          const SingleActivator(LogicalKeyboardKey.keyY, control: true):
+              _controller.redo,
         },
+        child: Focus(
+          autofocus: true,
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              final bool wide = constraints.maxWidth >= 980;
+              if (wide) return _buildWide(context);
+              return _buildNarrow(context);
+            },
+          ),
+        ),
       ),
     );
   }

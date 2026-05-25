@@ -2,20 +2,19 @@ import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../services/image_processing_service.dart';
-
-/// Which Phase-2 image tool is currently active.
-enum ImageTool { crop, rotate, mask }
 
 /// Full-screen modal editor that operates on a single layer's image bytes.
 ///
 /// Tools work sequentially: the user picks crop, makes an edit, hits "Apply
 /// crop"; that bakes the change into the working PNG and switches them back
 /// to the toolbar. The Mask tab uses immediate-mode painting (each brush
-/// stroke updates state right away). When the user taps "Done" the final
-/// bytes are returned via [Navigator.pop]; Cancel discards everything.
+/// stroke or wand fill is appended to an ordered op log). When the user taps
+/// "Done" the final bytes are returned via [Navigator.pop]; Cancel discards
+/// everything.
 class ImageEditorScreen extends StatefulWidget {
   const ImageEditorScreen({
     super.key,
@@ -45,15 +44,21 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
 
   // ---- crop tool state -------------------------------------------------
   Rect _cropFractional = const Rect.fromLTRB(0.1, 0.1, 0.9, 0.9);
+  _CropAspect _cropAspect = _CropAspect.free;
+
+  // ---- rotate tool state -----------------------------------------------
+  double _freeRotateDeg = 0;
 
   // ---- mask tool state -------------------------------------------------
-  // Brush strokes accumulated in *image-pixel* coordinates so they map
-  // unambiguously to the source image regardless of the display canvas size.
-  final List<Path> _erasePaths = <Path>[];
-  final List<FloodMask> _floodMasks = <FloodMask>[];
+  // An ordered log of mask operations. Insertion order matters: a restore
+  // stroke after an erase brings pixels back; an erase stroke after a
+  // restore re-erases them. Undo/redo move ops between [_maskOps] and
+  // [_maskRedo].
+  final List<_MaskOp> _maskOps = <_MaskOp>[];
+  final List<_MaskOp> _maskRedo = <_MaskOp>[];
   double _brushSize = 24; // pixel radius in image space
   int _wandTolerance = 60;
-  _MaskTool _maskTool = _MaskTool.brush;
+  _MaskTool _maskTool = _MaskTool.brushErase;
 
   @override
   void initState() {
@@ -80,9 +85,10 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
       _workingImage?.dispose();
       _workingImage = img;
       // Reset per-tool state that depends on image dimensions.
-      _erasePaths.clear();
-      _floodMasks.clear();
+      _maskOps.clear();
+      _maskRedo.clear();
       _cropFractional = const Rect.fromLTRB(0.1, 0.1, 0.9, 0.9);
+      _freeRotateDeg = 0;
     });
   }
 
@@ -116,16 +122,48 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
     }
   }
 
+  Future<void> _applyFreeRotate() async {
+    if (_freeRotateDeg.abs() < 0.1) return;
+    setState(() => _busy = true);
+    try {
+      final Uint8List next = await _svc.rotateAnyPng(_working, _freeRotateDeg);
+      _working = next;
+      await _decodeWorking();
+    } catch (e) {
+      _snack('Could not rotate: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   // ---------------------------------------------------------------- mask
 
   Future<void> _applyErasures() async {
-    if (_erasePaths.isEmpty && _floodMasks.isEmpty) return;
+    if (_maskOps.isEmpty) return;
     setState(() => _busy = true);
     try {
+      final List<Path> erase = <Path>[];
+      final List<FloodMask> floods = <FloodMask>[];
+      final List<Path> restore = <Path>[];
+      // Order matters in the service too: we currently apply *all* erase
+      // ops, then all restore ops — so any erase made after a restore in
+      // the timeline is preserved, but any restore made after an erase
+      // overrides the erase. That's the intent of the restore brush.
+      for (final _MaskOp op in _maskOps) {
+        switch (op) {
+          case _EraseStroke():
+            erase.add(op.path);
+          case _RestoreStroke():
+            restore.add(op.path);
+          case _WandFlood():
+            floods.add(op.mask);
+        }
+      }
       final Uint8List next = await _svc.applyErasures(
         _working,
-        erasePaths: List<Path>.of(_erasePaths),
-        floodMasks: List<FloodMask>.of(_floodMasks),
+        erasePaths: erase,
+        floodMasks: floods,
+        restorePaths: restore,
       );
       _working = next;
       await _decodeWorking();
@@ -136,13 +174,24 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
     }
   }
 
-  void _undoLastMaskOp() {
+  void _appendMaskOp(_MaskOp op) {
     setState(() {
-      if (_floodMasks.isNotEmpty) {
-        _floodMasks.removeLast();
-      } else if (_erasePaths.isNotEmpty) {
-        _erasePaths.removeLast();
-      }
+      _maskOps.add(op);
+      _maskRedo.clear();
+    });
+  }
+
+  void _undoMaskOp() {
+    if (_maskOps.isEmpty) return;
+    setState(() {
+      _maskRedo.add(_maskOps.removeLast());
+    });
+  }
+
+  void _redoMaskOp() {
+    if (_maskRedo.isEmpty) return;
+    setState(() {
+      _maskOps.add(_maskRedo.removeLast());
     });
   }
 
@@ -227,6 +276,7 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
 
   Widget _buildCropTab() {
     final ui.Image image = _workingImage!;
+    final double imageAspect = image.width / image.height;
     return Column(
       children: <Widget>[
         Expanded(
@@ -238,17 +288,22 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
                 child: (Size displaySize) => _CropOverlay(
                   displaySize: displaySize,
                   rect: _cropFractional,
+                  aspect: _cropAspect.ratio,
+                  imageAspect: imageAspect,
                   onChange: (Rect r) => setState(() => _cropFractional = r),
                 ),
               ),
             ),
           ),
         ),
+        _cropAspectBar(),
         _bottomBar(
           children: <Widget>[
             Expanded(
               child: Text(
-                'Drag the corners to set the crop area.',
+                _cropAspect == _CropAspect.free
+                    ? 'Drag the handles to set the crop area.'
+                    : 'Aspect locked to ${_cropAspect.label}. Drag any handle to resize.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
@@ -263,6 +318,43 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
     );
   }
 
+  Widget _cropAspectBar() {
+    return Material(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              const Padding(
+                padding: EdgeInsets.only(right: 8),
+                child: Text('Aspect'),
+              ),
+              for (final _CropAspect a in _CropAspect.values)
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: ChoiceChip(
+                    label: Text(a.label),
+                    selected: _cropAspect == a,
+                    onSelected: (_) => setState(() {
+                      _cropAspect = a;
+                      _cropFractional = _enforceAspectOnRect(
+                        _cropFractional,
+                        a.ratio,
+                        _workingImage!.width / _workingImage!.height,
+                      );
+                    }),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   // ========================================================== rotate tab
 
   Widget _buildRotateTab() {
@@ -274,8 +366,57 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
             child: Center(
               child: _AspectFitImage(
                 image: _workingImage!,
-                child: (_) => const SizedBox.expand(),
+                child: (_) => IgnorePointer(
+                  child: Transform.rotate(
+                    angle: _freeRotateDeg * 3.14159265358979 / 180,
+                    child: const SizedBox.expand(),
+                  ),
+                ),
               ),
+            ),
+          ),
+        ),
+        Material(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: <Widget>[
+                const Text('Free rotate'),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Slider(
+                    min: -180,
+                    max: 180,
+                    divisions: 360,
+                    value: _freeRotateDeg,
+                    label: '${_freeRotateDeg.toStringAsFixed(0)}°',
+                    onChanged: _busy
+                        ? null
+                        : (double v) => setState(() => _freeRotateDeg = v),
+                  ),
+                ),
+                SizedBox(
+                  width: 48,
+                  child: Text(
+                    '${_freeRotateDeg.toStringAsFixed(0)}°',
+                    textAlign: TextAlign.end,
+                  ),
+                ),
+                TextButton(
+                  onPressed: _busy || _freeRotateDeg == 0
+                      ? null
+                      : () => setState(() => _freeRotateDeg = 0),
+                  child: const Text('Reset'),
+                ),
+                FilledButton.icon(
+                  onPressed: _busy || _freeRotateDeg.abs() < 0.1
+                      ? null
+                      : _applyFreeRotate,
+                  icon: const Icon(Icons.check),
+                  label: const Text('Apply'),
+                ),
+              ],
             ),
           ),
         ),
@@ -301,7 +442,7 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
             ),
             const SizedBox(width: 12),
             Text(
-              'Free rotation\nfrom the canvas',
+              '90° quick rotates',
               textAlign: TextAlign.end,
               style: Theme.of(context).textTheme.bodySmall,
             ),
@@ -326,24 +467,12 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
                 child: (Size displaySize) => _MaskEditorOverlay(
                   image: image,
                   displaySize: displaySize,
-                  erasePaths: _erasePaths,
-                  floodMasks: _floodMasks,
+                  ops: _maskOps,
                   tool: _maskTool,
                   brushSize: _brushSize,
                   wandTolerance: _wandTolerance,
                   workingBytes: _working,
-                  onStrokeStart: (Path p) {
-                    setState(() => _erasePaths.add(p));
-                  },
-                  onStrokeUpdate: () {
-                    // The path mutates in place; the overlay's painter
-                    // listens to a notifier so the canvas repaints without
-                    // a full setState here.
-                  },
-                  onStrokeEnd: () {},
-                  onFloodMask: (FloodMask m) {
-                    setState(() => _floodMasks.add(m));
-                  },
+                  onAppendOp: _appendMaskOp,
                 ),
               ),
             ),
@@ -352,18 +481,20 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
         _maskToolbar(),
         _bottomBar(
           children: <Widget>[
-            OutlinedButton.icon(
-              onPressed: _busy || (_erasePaths.isEmpty && _floodMasks.isEmpty)
-                  ? null
-                  : _undoLastMaskOp,
+            IconButton.outlined(
+              tooltip: 'Undo',
+              onPressed: _busy || _maskOps.isEmpty ? null : _undoMaskOp,
               icon: const Icon(Icons.undo),
-              label: const Text('Undo'),
+            ),
+            const SizedBox(width: 8),
+            IconButton.outlined(
+              tooltip: 'Redo',
+              onPressed: _busy || _maskRedo.isEmpty ? null : _redoMaskOp,
+              icon: const Icon(Icons.redo),
             ),
             const Spacer(),
             FilledButton.icon(
-              onPressed: _busy || (_erasePaths.isEmpty && _floodMasks.isEmpty)
-                  ? null
-                  : _applyErasures,
+              onPressed: _busy || _maskOps.isEmpty ? null : _applyErasures,
               icon: const Icon(Icons.layers_clear),
               label: const Text('Apply erasures'),
             ),
@@ -384,9 +515,14 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
               showSelectedIcon: false,
               segments: const <ButtonSegment<_MaskTool>>[
                 ButtonSegment<_MaskTool>(
-                  value: _MaskTool.brush,
+                  value: _MaskTool.brushErase,
                   icon: Icon(Icons.brush),
-                  label: Text('Brush'),
+                  label: Text('Erase'),
+                ),
+                ButtonSegment<_MaskTool>(
+                  value: _MaskTool.brushRestore,
+                  icon: Icon(Icons.auto_fix_normal),
+                  label: Text('Restore'),
                 ),
                 ButtonSegment<_MaskTool>(
                   value: _MaskTool.wand,
@@ -399,19 +535,7 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
                   setState(() => _maskTool = s.first),
             ),
             const SizedBox(width: 16),
-            if (_maskTool == _MaskTool.brush) ...<Widget>[
-              const Text('Brush'),
-              SizedBox(
-                width: 160,
-                child: Slider(
-                  min: 4,
-                  max: 96,
-                  value: _brushSize,
-                  onChanged: (double v) => setState(() => _brushSize = v),
-                ),
-              ),
-              Text('${_brushSize.round()}px'),
-            ] else ...<Widget>[
+            if (_maskTool == _MaskTool.wand) ...<Widget>[
               const Text('Tolerance'),
               SizedBox(
                 width: 160,
@@ -424,14 +548,25 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
                 ),
               ),
               Text('$_wandTolerance'),
+            ] else ...<Widget>[
+              const Text('Brush'),
+              SizedBox(
+                width: 160,
+                child: Slider(
+                  min: 4,
+                  max: 160,
+                  value: _brushSize,
+                  onChanged: (double v) => setState(() => _brushSize = v),
+                ),
+              ),
+              Text('${_brushSize.round()}px'),
             ],
             const Spacer(),
-            Text(
-              _maskTool == _MaskTool.brush
-                  ? 'Drag to erase'
-                  : 'Tap a region to erase',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+            Text(switch (_maskTool) {
+              _MaskTool.brushErase => 'Drag to erase',
+              _MaskTool.brushRestore => 'Drag to bring pixels back',
+              _MaskTool.wand => 'Tap a region to erase',
+            }, style: Theme.of(context).textTheme.bodySmall),
           ],
         ),
       ),
@@ -457,7 +592,67 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
   }
 }
 
-enum _MaskTool { brush, wand }
+// ============================================================ supporting types
+
+enum _MaskTool { brushErase, brushRestore, wand }
+
+/// Sealed family of mask-editor operations, applied in insertion order.
+sealed class _MaskOp {
+  const _MaskOp();
+}
+
+class _EraseStroke extends _MaskOp {
+  _EraseStroke(this.path);
+  final Path path;
+}
+
+class _RestoreStroke extends _MaskOp {
+  _RestoreStroke(this.path);
+  final Path path;
+}
+
+class _WandFlood extends _MaskOp {
+  _WandFlood(this.mask);
+  final FloodMask mask;
+}
+
+/// Crop aspect-ratio presets. `null` for [_CropAspect.free] means the user
+/// drags corners/edges freely; any other value locks `width/height`.
+enum _CropAspect {
+  free(null, 'Free'),
+  square(1.0, '1:1'),
+  portrait4x5(4 / 5, '4:5'),
+  portrait9x16(9 / 16, '9:16'),
+  landscape16x9(16 / 9, '16:9'),
+  landscape4x3(4 / 3, '4:3'),
+  portrait3x4(3 / 4, '3:4');
+
+  const _CropAspect(this.ratio, this.label);
+  final double? ratio;
+  final String label;
+}
+
+/// Re-clamp [rect] (fractional, 0..1, in image-fractional space) so that its
+/// rendered width/height honour [ratio]. `imageAspect = image.width/image.height`.
+/// When [ratio] is null, the input is returned unchanged.
+Rect _enforceAspectOnRect(Rect rect, double? ratio, double imageAspect) {
+  if (ratio == null) return rect;
+  // Desired w/h of the crop expressed in fractional units: target_w * iw /
+  // (target_h * ih) == ratio  →  target_w / target_h == ratio / imageAspect.
+  final double frac = ratio / imageAspect;
+  // Decide whether to fit by width or height (pick the smaller resulting box
+  // so we never expand past the bounds).
+  final double byW = rect.width;
+  final double byH = rect.height * frac;
+  final double targetW = byW < byH ? byW : byH;
+  final double targetH = targetW / frac;
+  // Re-center on the current rect's centre, then clamp into 0..1.
+  final double cx = rect.center.dx;
+  final double cy = rect.center.dy;
+  final double l = (cx - targetW / 2).clamp(0.0, 1.0 - targetW);
+  final double t = (cy - targetH / 2).clamp(0.0, 1.0 - targetH);
+  return Rect.fromLTWH(l, t, targetW, targetH);
+}
 
 // ============================================================ helpers
 
@@ -504,11 +699,15 @@ class _CropOverlay extends StatelessWidget {
   const _CropOverlay({
     required this.displaySize,
     required this.rect,
+    required this.aspect,
+    required this.imageAspect,
     required this.onChange,
   });
 
   final Size displaySize;
   final Rect rect; // fractional 0..1
+  final double? aspect; // null = free
+  final double imageAspect;
   final ValueChanged<Rect> onChange;
 
   Rect _displayRect() => Rect.fromLTWH(
@@ -526,7 +725,11 @@ class _CropOverlay extends StatelessWidget {
     onChange(Rect.fromLTWH(nl, nt, rect.width, rect.height));
   }
 
-  void _resize(Offset deltaPx, double dxSign, double dySign) {
+  /// Resize by dragging a handle. [dxSign]/[dySign] are -1, 0, or 1: -1 means
+  /// the handle is on the LEFT/TOP (dragging adjusts left/top edge), +1 means
+  /// RIGHT/BOTTOM, 0 means the handle only moves along the other axis (edge
+  /// handle).
+  void _resize(Offset deltaPx, int dxSign, int dySign) {
     final double dx = deltaPx.dx / displaySize.width;
     final double dy = deltaPx.dy / displaySize.height;
     double l = rect.left;
@@ -535,15 +738,65 @@ class _CropOverlay extends StatelessWidget {
     double b = rect.bottom;
     if (dxSign < 0) {
       l = (l + dx).clamp(0.0, r - 0.05);
-    } else {
+    } else if (dxSign > 0) {
       r = (r + dx).clamp(l + 0.05, 1.0);
     }
     if (dySign < 0) {
       t = (t + dy).clamp(0.0, b - 0.05);
-    } else {
+    } else if (dySign > 0) {
       b = (b + dy).clamp(t + 0.05, 1.0);
     }
-    onChange(Rect.fromLTRB(l, t, r, b));
+    Rect next = Rect.fromLTRB(l, t, r, b);
+    if (aspect != null) {
+      // Re-enforce the aspect ratio around the *fixed* opposite anchor.
+      final double frac = aspect! / imageAspect;
+      // Anchor = the corner/edge that did NOT move under the user's finger.
+      final double anchorX = dxSign < 0 ? r : (dxSign > 0 ? l : (l + r) / 2);
+      final double anchorY = dySign < 0 ? b : (dySign > 0 ? t : (t + b) / 2);
+      // Choose new width/height matching the user's drag, then enforce ratio.
+      double w = next.width;
+      double h = next.height;
+      if (dxSign != 0 && dySign != 0) {
+        // Corner drag — match the dominant axis the user pushed harder.
+        if (w / frac > h) {
+          h = w / frac;
+        } else {
+          w = h * frac;
+        }
+      } else if (dxSign != 0) {
+        h = w / frac;
+      } else if (dySign != 0) {
+        w = h * frac;
+      }
+      // Rebuild around the anchor.
+      double newL = dxSign < 0
+          ? anchorX - w
+          : (dxSign > 0 ? anchorX : anchorX - w / 2);
+      double newT = dySign < 0
+          ? anchorY - h
+          : (dySign > 0 ? anchorY : anchorY - h / 2);
+      // Clamp into bounds; if clamping shrinks one axis we re-derive the other.
+      if (newL < 0) {
+        w += newL;
+        newL = 0;
+        h = w / frac;
+      }
+      if (newT < 0) {
+        h += newT;
+        newT = 0;
+        w = h * frac;
+      }
+      if (newL + w > 1) {
+        w = 1 - newL;
+        h = w / frac;
+      }
+      if (newT + h > 1) {
+        h = 1 - newT;
+        w = h * frac;
+      }
+      next = Rect.fromLTWH(newL, newT, w, h);
+    }
+    onChange(next);
   }
 
   @override
@@ -559,7 +812,8 @@ class _CropOverlay extends StatelessWidget {
             size: displaySize,
           ),
         ),
-        // Move the crop rect by dragging its interior.
+        // Move the crop rect by dragging its interior. Rule-of-thirds grid
+        // overlay lives here too so it shifts with the rect.
         Positioned(
           left: r.left,
           top: r.top,
@@ -568,39 +822,80 @@ class _CropOverlay extends StatelessWidget {
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
             onPanUpdate: (DragUpdateDetails d) => _move(d.delta),
-            child: Container(
-              decoration: BoxDecoration(
-                border: Border.all(color: accent, width: 2),
-              ),
-            ),
+            child: CustomPaint(painter: _CropFramePainter(color: accent)),
           ),
         ),
+        // 4 edge handles (top/right/bottom/left midpoints).
+        for (final ({int dxSign, int dySign}) edge
+            in const <({int dxSign, int dySign})>[
+              (dxSign: 0, dySign: -1),
+              (dxSign: 1, dySign: 0),
+              (dxSign: 0, dySign: 1),
+              (dxSign: -1, dySign: 0),
+            ])
+          _edgeHandle(r, edge.dxSign, edge.dySign, accent),
         // 4 corner handles.
-        for (final ({double dxSign, double dySign}) corner
-            in const <({double dxSign, double dySign})>[
+        for (final ({int dxSign, int dySign}) corner
+            in const <({int dxSign, int dySign})>[
               (dxSign: -1, dySign: -1),
               (dxSign: 1, dySign: -1),
               (dxSign: -1, dySign: 1),
               (dxSign: 1, dySign: 1),
             ])
-          Positioned(
-            left: corner.dxSign < 0 ? r.left - 10 : r.right - 10,
-            top: corner.dySign < 0 ? r.top - 10 : r.bottom - 10,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onPanUpdate: (DragUpdateDetails d) =>
-                  _resize(d.delta, corner.dxSign, corner.dySign),
-              child: Container(
-                width: 20,
-                height: 20,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  border: Border.all(color: accent, width: 2),
-                ),
-              ),
+          _cornerHandle(r, corner.dxSign, corner.dySign, accent),
+      ],
+    );
+  }
+
+  Widget _cornerHandle(Rect r, int dxSign, int dySign, Color accent) {
+    return Positioned(
+      left: dxSign < 0 ? r.left - 10 : r.right - 10,
+      top: dySign < 0 ? r.top - 10 : r.bottom - 10,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onPanUpdate: (DragUpdateDetails d) => _resize(d.delta, dxSign, dySign),
+        child: Container(
+          width: 20,
+          height: 20,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: accent, width: 2),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _edgeHandle(Rect r, int dxSign, int dySign, Color accent) {
+    const double size = 18;
+    final bool horizontal = dySign == 0;
+    final double left = dxSign < 0
+        ? r.left - size / 2
+        : (dxSign > 0 ? r.right - size / 2 : r.left + r.width / 2 - size / 2);
+    final double top = dySign < 0
+        ? r.top - size / 2
+        : (dySign > 0 ? r.bottom - size / 2 : r.top + r.height / 2 - size / 2);
+    return Positioned(
+      left: left,
+      top: top,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onPanUpdate: (DragUpdateDetails d) => _resize(d.delta, dxSign, dySign),
+        child: MouseRegion(
+          cursor: horizontal
+              ? SystemMouseCursors.resizeLeftRight
+              : SystemMouseCursors.resizeUpDown,
+          child: Container(
+            width: horizontal ? size * 0.6 : size * 1.6,
+            height: horizontal ? size * 1.6 : size * 0.6,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(3),
+              border: Border.all(color: accent, width: 2),
             ),
           ),
-      ],
+        ),
+      ),
     );
   }
 }
@@ -626,42 +921,66 @@ class _CropDimPainter extends CustomPainter {
       old.rect != rect || old.color != color;
 }
 
+/// Draws the crop rect's border + a rule-of-thirds grid inside it.
+class _CropFramePainter extends CustomPainter {
+  _CropFramePainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Paint border = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    canvas.drawRect(Offset.zero & size, border);
+    final Paint grid = Paint()
+      ..color = color.withValues(alpha: 0.55)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    final double w3 = size.width / 3;
+    final double h3 = size.height / 3;
+    canvas.drawLine(Offset(w3, 0), Offset(w3, size.height), grid);
+    canvas.drawLine(Offset(w3 * 2, 0), Offset(w3 * 2, size.height), grid);
+    canvas.drawLine(Offset(0, h3), Offset(size.width, h3), grid);
+    canvas.drawLine(Offset(0, h3 * 2), Offset(size.width, h3 * 2), grid);
+  }
+
+  @override
+  bool shouldRepaint(_CropFramePainter old) => old.color != color;
+}
+
 // ============================================================ mask overlay
 
 class _MaskEditorOverlay extends StatefulWidget {
   const _MaskEditorOverlay({
     required this.image,
     required this.displaySize,
-    required this.erasePaths,
-    required this.floodMasks,
+    required this.ops,
     required this.tool,
     required this.brushSize,
     required this.wandTolerance,
     required this.workingBytes,
-    required this.onStrokeStart,
-    required this.onStrokeUpdate,
-    required this.onStrokeEnd,
-    required this.onFloodMask,
+    required this.onAppendOp,
   });
 
   final ui.Image image;
   final Size displaySize;
-  final List<Path> erasePaths;
-  final List<FloodMask> floodMasks;
+  final List<_MaskOp> ops;
   final _MaskTool tool;
   final double brushSize;
   final int wandTolerance;
   final Uint8List workingBytes;
-  final ValueChanged<Path> onStrokeStart;
-  final VoidCallback onStrokeUpdate;
-  final VoidCallback onStrokeEnd;
-  final ValueChanged<FloodMask> onFloodMask;
+  final ValueChanged<_MaskOp> onAppendOp;
 
   @override
   State<_MaskEditorOverlay> createState() => _MaskEditorOverlayState();
 }
 
 class _MaskEditorOverlayState extends State<_MaskEditorOverlay> {
+  // Currently in-progress brush path (image-pixel coords). Pushed onto the
+  // op log as a brand-new op at pan start so the painter sees it live, then
+  // gets its points appended in pan update.
   Path? _currentPath;
   // Triggers the painter to redraw without rebuilding any other widgets.
   final ValueNotifier<int> _repaintTick = ValueNotifier<int>(0);
@@ -669,6 +988,8 @@ class _MaskEditorOverlayState extends State<_MaskEditorOverlay> {
   final Map<FloodMask, ui.Image> _maskImages = <FloodMask, ui.Image>{};
   // Magic-wand can take a few hundred ms; we lock the UI while it runs.
   bool _wandBusy = false;
+  // Pointer position in display pixels — used to draw the brush cursor.
+  Offset? _hover;
 
   final ImageProcessingService _svc = const ImageProcessingService();
 
@@ -688,29 +1009,35 @@ class _MaskEditorOverlayState extends State<_MaskEditorOverlay> {
     return Offset(display.dx * sx, display.dy * sy);
   }
 
+  bool get _isBrush =>
+      widget.tool == _MaskTool.brushErase ||
+      widget.tool == _MaskTool.brushRestore;
+
   void _onPanStart(DragStartDetails d) {
-    if (widget.tool != _MaskTool.brush) return;
+    if (!_isBrush) return;
     final Offset imgPt = _displayToImage(d.localPosition);
     final Path p = Path()
       ..addOval(Rect.fromCircle(center: imgPt, radius: widget.brushSize));
     _currentPath = p;
-    widget.onStrokeStart(p);
+    final _MaskOp op = widget.tool == _MaskTool.brushErase
+        ? _EraseStroke(p)
+        : _RestoreStroke(p);
+    widget.onAppendOp(op);
     _repaintTick.value++;
   }
 
   void _onPanUpdate(DragUpdateDetails d) {
-    if (widget.tool != _MaskTool.brush || _currentPath == null) return;
+    if (!_isBrush || _currentPath == null) return;
     final Offset imgPt = _displayToImage(d.localPosition);
     _currentPath!.addOval(
       Rect.fromCircle(center: imgPt, radius: widget.brushSize),
     );
-    widget.onStrokeUpdate();
+    _hover = d.localPosition;
     _repaintTick.value++;
   }
 
   void _onPanEnd(DragEndDetails _) {
     _currentPath = null;
-    widget.onStrokeEnd();
   }
 
   Future<void> _onTap(TapDownDetails d) async {
@@ -724,9 +1051,9 @@ class _MaskEditorOverlayState extends State<_MaskEditorOverlay> {
         imgPt.dy.round(),
         tolerance: widget.wandTolerance,
       );
-      widget.onFloodMask(m);
       // Pre-decode the mask image so subsequent repaints are smooth.
       _maskImages[m] = await _maskToUi(m);
+      widget.onAppendOp(_WandFlood(m));
       _repaintTick.value++;
     } finally {
       if (mounted) setState(() => _wandBusy = false);
@@ -751,30 +1078,61 @@ class _MaskEditorOverlayState extends State<_MaskEditorOverlay> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onPanStart: _onPanStart,
-      onPanUpdate: _onPanUpdate,
-      onPanEnd: _onPanEnd,
-      onTapDown: _onTap,
-      child: Stack(
-        fit: StackFit.expand,
-        children: <Widget>[
-          RepaintBoundary(
-            child: CustomPaint(
-              painter: _MaskCompositePainter(
-                image: widget.image,
-                erasePaths: widget.erasePaths,
-                floodMaskImages: <ui.Image>[
-                  for (final FloodMask m in widget.floodMasks)
-                    if (_maskImages[m] != null) _maskImages[m]!,
-                ],
-                repaint: _repaintTick,
+    // Re-resolve the mask image cache: any WandFlood op that's been undone
+    // or removed should drop its cached image. We keep ones that are still
+    // referenced by the op log.
+    final Set<FloodMask> live = <FloodMask>{
+      for (final _MaskOp op in widget.ops)
+        if (op is _WandFlood) op.mask,
+    };
+    _maskImages.removeWhere((FloodMask k, ui.Image v) {
+      if (live.contains(k)) return false;
+      v.dispose();
+      return true;
+    });
+
+    return MouseRegion(
+      onHover: _isBrush
+          ? (PointerHoverEvent e) {
+              _hover = e.localPosition;
+              _repaintTick.value++;
+            }
+          : null,
+      onExit: (_) {
+        _hover = null;
+        _repaintTick.value++;
+      },
+      cursor: _isBrush ? SystemMouseCursors.precise : SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onPanStart: _onPanStart,
+        onPanUpdate: _onPanUpdate,
+        onPanEnd: _onPanEnd,
+        onTapDown: _onTap,
+        child: Stack(
+          fit: StackFit.expand,
+          children: <Widget>[
+            RepaintBoundary(
+              child: CustomPaint(
+                painter: _MaskCompositePainter(
+                  image: widget.image,
+                  ops: widget.ops,
+                  maskImages: _maskImages,
+                  hover: _hover,
+                  brushRadiusPx: _isBrush
+                      ? widget.brushSize *
+                            (widget.displaySize.width / widget.image.width)
+                      : 0,
+                  brushAccent: widget.tool == _MaskTool.brushRestore
+                      ? Theme.of(context).colorScheme.tertiary
+                      : Theme.of(context).colorScheme.primary,
+                  repaint: _repaintTick,
+                ),
               ),
             ),
-          ),
-          if (_wandBusy) const Center(child: CircularProgressIndicator()),
-        ],
+            if (_wandBusy) const Center(child: CircularProgressIndicator()),
+          ],
+        ),
       ),
     );
   }
@@ -783,14 +1141,20 @@ class _MaskEditorOverlayState extends State<_MaskEditorOverlay> {
 class _MaskCompositePainter extends CustomPainter {
   _MaskCompositePainter({
     required this.image,
-    required this.erasePaths,
-    required this.floodMaskImages,
+    required this.ops,
+    required this.maskImages,
+    required this.hover,
+    required this.brushRadiusPx,
+    required this.brushAccent,
     required Listenable repaint,
   }) : super(repaint: repaint);
 
   final ui.Image image;
-  final List<Path> erasePaths;
-  final List<ui.Image> floodMaskImages;
+  final List<_MaskOp> ops;
+  final Map<FloodMask, ui.Image> maskImages;
+  final Offset? hover;
+  final double brushRadiusPx;
+  final Color brushAccent;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -810,22 +1174,59 @@ class _MaskCompositePainter extends CustomPainter {
       Paint(),
     );
     final Paint erase = Paint()..blendMode = BlendMode.dstOut;
-    // Paths are in image-pixel coords — scale down to display pixels.
-    canvas.save();
-    canvas.scale(sx, sy);
-    for (final Path p in erasePaths) {
-      canvas.drawPath(p, erase);
+    final Paint restoreImg = Paint()..blendMode = BlendMode.dstOver;
+    // Apply each op in order; paths are in image-pixel coords so we drive a
+    // scaled sub-canvas to keep their math simple.
+    for (final _MaskOp op in ops) {
+      switch (op) {
+        case _EraseStroke():
+          canvas.save();
+          canvas.scale(sx, sy);
+          canvas.drawPath(op.path, erase);
+          canvas.restore();
+        case _RestoreStroke():
+          canvas.save();
+          canvas.scale(sx, sy);
+          canvas.clipPath(op.path);
+          canvas.scale(1 / sx, 1 / sy);
+          canvas.drawImageRect(
+            image,
+            Rect.fromLTWH(
+              0,
+              0,
+              image.width.toDouble(),
+              image.height.toDouble(),
+            ),
+            dst,
+            restoreImg,
+          );
+          canvas.restore();
+        case _WandFlood():
+          final ui.Image? m = maskImages[op.mask];
+          if (m == null) break;
+          canvas.drawImageRect(
+            m,
+            Rect.fromLTWH(0, 0, m.width.toDouble(), m.height.toDouble()),
+            dst,
+            erase,
+          );
+      }
     }
     canvas.restore();
-    for (final ui.Image m in floodMaskImages) {
-      canvas.drawImageRect(
-        m,
-        Rect.fromLTWH(0, 0, m.width.toDouble(), m.height.toDouble()),
-        dst,
-        erase,
-      );
+
+    // Brush cursor — drawn after restore so it sits on top of everything.
+    if (hover != null && brushRadiusPx > 0) {
+      final Paint outer = Paint()
+        ..color = brushAccent.withValues(alpha: 0.85)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5;
+      final Paint inner = Paint()
+        ..color = Colors.white.withValues(alpha: 0.9)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.8;
+      canvas.drawCircle(hover!, brushRadiusPx, outer);
+      canvas.drawCircle(hover!, brushRadiusPx - 1, inner);
     }
-    canvas.restore();
   }
 
   void _paintCheckerboard(Canvas canvas, Rect rect) {
@@ -848,8 +1249,10 @@ class _MaskCompositePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_MaskCompositePainter old) {
-    // We rely on the `repaint` Listenable; deep-compare is unnecessary.
     return !identical(old.image, image) ||
-        !listEquals(old.floodMaskImages, floodMaskImages);
+        !listEquals(old.ops, ops) ||
+        old.hover != hover ||
+        old.brushRadiusPx != brushRadiusPx ||
+        old.brushAccent != brushAccent;
   }
 }

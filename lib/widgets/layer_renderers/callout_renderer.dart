@@ -173,91 +173,133 @@ class _CalloutPainter extends CustomPainter {
       case CalloutKind.oval:
         return Path()..addOval(r);
       case CalloutKind.thoughtCloud:
-        return _smoothCloudPath(r, bumps: 10);
+        return _puffyCloudPath(r, bumps: 11);
       case CalloutKind.scallop:
         return _scallopedRectPath(r);
     }
   }
 
-  /// Draws a fluffy cloud by walking around an inner ellipse and arcing
-  /// outward between each step. Each segment is a circular arc, so adjacent
-  /// bumps connect tangentially and the outline is smooth.
-  Path _smoothCloudPath(Rect r, {required int bumps}) {
+  /// Fluffy cloud built as the boolean **union** of an inner ellipse and a
+  /// ring of overlapping circular puffs along its perimeter. Unlike stitching
+  /// circular arcs together with `arcToPoint`, this guarantees a tangent-
+  /// continuous outline at every joint — there are no kinks because the
+  /// boundary is the silhouette of overlapping discs.
+  Path _puffyCloudPath(Rect r, {required int bumps}) {
     final double cx = r.center.dx;
     final double cy = r.center.dy;
-    // Inner ellipse the bumps are anchored to.
-    final double baseRx = r.width / 2 * 0.86;
-    final double baseRy = r.height / 2 * 0.86;
-    final double bumpRadius =
-        math.min(baseRx, baseRy) * (math.pi / bumps) * 1.05;
+    // The inner ellipse the puffs sit on. A bit smaller than the bounding rect
+    // so the outermost edge of each puff lands on/near the rect edge.
+    final double baseRx = r.width / 2 * 0.74;
+    final double baseRy = r.height / 2 * 0.74;
+    // Puff radius scaled so adjacent puffs overlap (≈ 1.25× the chord
+    // between two centres along the inner ellipse), giving a smooth union.
+    final double chord =
+        2 * math.sin(math.pi / bumps) * math.min(baseRx, baseRy);
+    final double puffR = chord * 0.78;
 
-    final Path p = Path();
-    for (int i = 0; i <= bumps; i++) {
+    Path body = Path()
+      ..addOval(
+        Rect.fromCenter(
+          center: r.center,
+          width: baseRx * 2,
+          height: baseRy * 2,
+        ),
+      );
+    for (int i = 0; i < bumps; i++) {
       final double t = i / bumps * 2 * math.pi;
-      final Offset pt = Offset(
+      final Offset c = Offset(
         cx + math.cos(t) * baseRx,
         cy + math.sin(t) * baseRy,
       );
-      if (i == 0) {
-        p.moveTo(pt.dx, pt.dy);
-      } else {
-        // Arc outward: clockwise:false makes the bulge sit on the *outside*
-        // of the ellipse (away from the center).
-        p.arcToPoint(pt, radius: Radius.circular(bumpRadius), clockwise: false);
-      }
+      final Path puff = Path()
+        ..addOval(Rect.fromCircle(center: c, radius: puffR));
+      body = Path.combine(PathOperation.union, body, puff);
     }
-    p.close();
-    return p;
+    return body;
   }
 
-  /// Rounded-rectangle whose edges are bumped outward with small semicircles.
-  /// Bump count along each side is derived from edge length so the bumps
-  /// stay roughly square regardless of aspect ratio.
+  /// Rounded-rectangle whose edges are bumped outward with semicircles.
+  /// Built as the boolean union of an inner rounded rect and a ring of
+  /// overlapping circles along its perimeter — same recipe as the cloud,
+  /// which means the corners and the bump joins are all tangent-continuous.
   Path _scallopedRectPath(Rect r) {
-    // Aim for ~0.12 of the shorter side per bump.
     final double s = math.min(r.width, r.height);
-    final double targetBumpLen = s * 0.13;
-    final int bumpsX = math.max(3, (r.width / targetBumpLen).round());
-    final int bumpsY = math.max(3, (r.height / targetBumpLen).round());
-    final double bumpW = r.width / bumpsX;
-    final double bumpH = r.height / bumpsY;
+    // Inner rounded-rect: the bumps will protrude beyond this.
+    final double inset = s * 0.07;
+    final Rect inner = Rect.fromLTRB(
+      r.left + inset,
+      r.top + inset,
+      r.right - inset,
+      r.bottom - inset,
+    );
+    final double cornerR = math.min(inner.width, inner.height) * 0.20;
+    final RRect innerRR = RRect.fromRectAndRadius(
+      inner,
+      Radius.circular(cornerR),
+    );
 
-    final Path p = Path();
-    p.moveTo(r.left, r.top);
-    // Top edge — bumps bulge UP (negative y).
-    for (int i = 1; i <= bumpsX; i++) {
-      p.arcToPoint(
-        Offset(r.left + bumpW * i, r.top),
-        radius: Radius.circular(bumpW / 2),
-        clockwise: true,
+    // Puff size + centre-to-centre spacing chosen so successive puffs overlap
+    // (spacing < 2*puffR), guaranteeing a smooth union outline.
+    final double puffR = s * 0.085;
+    final double spacing = puffR * 1.55;
+
+    Path body = Path()..addRRect(innerRR);
+
+    // Helper: place puffs from `a` to `b`, evenly spaced, both endpoints
+    // included. `a` and `b` must lie on the same straight segment.
+    void scatter(Offset a, Offset b) {
+      final double len = (b - a).distance;
+      if (len <= 0) return;
+      final int n = math.max(1, (len / spacing).round());
+      for (int i = 0; i <= n; i++) {
+        final double t = i / n;
+        final Offset c = Offset.lerp(a, b, t)!;
+        body = Path.combine(
+          PathOperation.union,
+          body,
+          Path()..addOval(Rect.fromCircle(center: c, radius: puffR)),
+        );
+      }
+    }
+
+    // Straight runs along each side (excluding the rounded corners).
+    scatter(
+      Offset(inner.left + cornerR, inner.top),
+      Offset(inner.right - cornerR, inner.top),
+    );
+    scatter(
+      Offset(inner.right, inner.top + cornerR),
+      Offset(inner.right, inner.bottom - cornerR),
+    );
+    scatter(
+      Offset(inner.right - cornerR, inner.bottom),
+      Offset(inner.left + cornerR, inner.bottom),
+    );
+    scatter(
+      Offset(inner.left, inner.bottom - cornerR),
+      Offset(inner.left, inner.top + cornerR),
+    );
+
+    // Corner bumps — one puff straddling each quarter-circle so the corner
+    // doesn't read as flat between the straight runs.
+    for (final Offset corner in <Offset>[
+      Offset(inner.left + cornerR, inner.top + cornerR),
+      Offset(inner.right - cornerR, inner.top + cornerR),
+      Offset(inner.right - cornerR, inner.bottom - cornerR),
+      Offset(inner.left + cornerR, inner.bottom - cornerR),
+    ]) {
+      final double dx = corner.dx < r.center.dx ? -cornerR : cornerR;
+      final double dy = corner.dy < r.center.dy ? -cornerR : cornerR;
+      // 45° outward from the corner centre by `cornerR`.
+      final Offset c = corner + Offset(dx, dy) * (math.sqrt2 / 2);
+      body = Path.combine(
+        PathOperation.union,
+        body,
+        Path()..addOval(Rect.fromCircle(center: c, radius: puffR)),
       );
     }
-    // Right edge — bumps bulge RIGHT.
-    for (int i = 1; i <= bumpsY; i++) {
-      p.arcToPoint(
-        Offset(r.right, r.top + bumpH * i),
-        radius: Radius.circular(bumpH / 2),
-        clockwise: true,
-      );
-    }
-    // Bottom edge — bumps bulge DOWN.
-    for (int i = 1; i <= bumpsX; i++) {
-      p.arcToPoint(
-        Offset(r.right - bumpW * i, r.bottom),
-        radius: Radius.circular(bumpW / 2),
-        clockwise: true,
-      );
-    }
-    // Left edge — bumps bulge LEFT, closing the path.
-    for (int i = 1; i <= bumpsY; i++) {
-      p.arcToPoint(
-        Offset(r.left, r.bottom - bumpH * i),
-        radius: Radius.circular(bumpH / 2),
-        clockwise: true,
-      );
-    }
-    p.close();
-    return p;
+
+    return body;
   }
 
   // -------------------------------------------------------------- tail

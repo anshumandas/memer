@@ -87,6 +87,22 @@ class ImageProcessingService {
     return Uint8List.fromList(img.encodePng(rotated));
   }
 
+  /// Rotate [bytes] by an arbitrary [degrees] (clockwise positive). The output
+  /// PNG's canvas grows so the rotated source fits without clipping; the new
+  /// corners are transparent. Uses cubic interpolation for smoother edges.
+  Future<Uint8List> rotateAnyPng(Uint8List bytes, double degrees) async {
+    final double normalized = degrees % 360;
+    if (normalized.abs() < 0.01) return bytes;
+    final img.Image? src = img.decodeImage(bytes);
+    if (src == null) return bytes;
+    final img.Image rotated = img.copyRotate(
+      src,
+      angle: normalized,
+      interpolation: img.Interpolation.cubic,
+    );
+    return Uint8List.fromList(img.encodePng(rotated));
+  }
+
   /// Flood-fill from [seed] using a colour-similarity tolerance.
   ///
   /// Two pixels are considered "similar" when the sum of their RGB channel
@@ -114,7 +130,8 @@ class ImageProcessingService {
     return FloodMask(bytes: mask, width: w, height: h);
   }
 
-  /// Bake erasures into the source image and return a transparent PNG.
+  /// Bake erasures (and any restore strokes) into the source image and
+  /// return a transparent PNG.
   ///
   /// [erasePaths] are accumulated brush strokes expressed in **image-pixel
   /// coordinates**. Each path is filled with [Paint.blendMode] = `dstOut`
@@ -123,10 +140,16 @@ class ImageProcessingService {
   /// [floodMasks] are individual flood-fill results (also in image pixels).
   /// Each is composited the same way using a single-channel image with the
   /// mask value as alpha.
+  ///
+  /// [restorePaths] are brush strokes that bring previously-erased pixels
+  /// back. After all erasures have been applied, the source image is drawn
+  /// again clipped to each restore path using [BlendMode.dstOver], which
+  /// fills only the already-transparent regions.
   Future<Uint8List> applyErasures(
     Uint8List sourceBytes, {
     required List<Path> erasePaths,
     required List<FloodMask> floodMasks,
+    List<Path> restorePaths = const <Path>[],
   }) async {
     final ui.Image source = await decodeUiImage(sourceBytes);
     final int w = source.width;
@@ -160,6 +183,16 @@ class ImageProcessingService {
       final ui.Image maskImage = await _maskToImage(m);
       canvas.drawImage(maskImage, Offset.zero, erasePaint);
       maskImage.dispose();
+    }
+
+    if (restorePaths.isNotEmpty) {
+      final Paint restorePaint = Paint()..blendMode = BlendMode.dstOver;
+      for (final Path p in restorePaths) {
+        canvas.save();
+        canvas.clipPath(p);
+        canvas.drawImage(source, Offset.zero, restorePaint);
+        canvas.restore();
+      }
     }
 
     canvas.restore();

@@ -28,6 +28,80 @@ class MemeController extends ChangeNotifier {
   String _nextId(String prefix) =>
       '${prefix}_${DateTime.now().microsecondsSinceEpoch}_${_idCounter++}';
 
+  // ----------------------------------------------------------- undo / redo
+  //
+  // Each mutating method calls [_pushHistory] before changing [_config]. The
+  // previous snapshot lands on [_undoStack]; the redo stack is wiped because
+  // any new edit invalidates a forward history.
+  //
+  // Continuous edits (a single drag fires moveLayer/resizeLayer many times)
+  // are coalesced into one history entry via [beginTransaction] /
+  // [endTransaction] — only the first mutation inside a transaction pushes.
+  //
+  // History is capped so we never grow unbounded; image edits in particular
+  // can carry a multi-MB payload per entry.
+  final List<MemeConfig> _undoStack = <MemeConfig>[];
+  final List<MemeConfig> _redoStack = <MemeConfig>[];
+  bool _inTransaction = false;
+  bool _transactionPushed = false;
+  static const int _maxHistory = 40;
+
+  bool get canUndo => _undoStack.isNotEmpty;
+  bool get canRedo => _redoStack.isNotEmpty;
+
+  void _pushHistory() {
+    if (_inTransaction && _transactionPushed) return;
+    _undoStack.add(_config);
+    if (_undoStack.length > _maxHistory) {
+      _undoStack.removeAt(0);
+    }
+    _redoStack.clear();
+    if (_inTransaction) _transactionPushed = true;
+  }
+
+  /// Begin a coalesced-edit transaction. Until [endTransaction] is called,
+  /// only the first mutation inside this block pushes a history entry —
+  /// every subsequent mutation in the same transaction reuses it.
+  ///
+  /// Used by the selection overlay so a multi-frame drag collapses to a
+  /// single undoable step.
+  void beginTransaction() {
+    _inTransaction = true;
+    _transactionPushed = false;
+  }
+
+  void endTransaction() {
+    _inTransaction = false;
+    _transactionPushed = false;
+  }
+
+  void undo() {
+    if (_undoStack.isEmpty) return;
+    _redoStack.add(_config);
+    _config = _undoStack.removeLast();
+    _ensureSelectionValid();
+    notifyListeners();
+  }
+
+  void redo() {
+    if (_redoStack.isEmpty) return;
+    _undoStack.add(_config);
+    _config = _redoStack.removeLast();
+    _ensureSelectionValid();
+    notifyListeners();
+  }
+
+  /// Drop the selected-layer id when the layer no longer exists in the
+  /// current config — happens after an undo that removes a layer or a redo
+  /// that re-adds one with a different id.
+  void _ensureSelectionValid() {
+    if (_selectedLayerId == null) return;
+    for (final Layer l in _config.layers) {
+      if (l.id == _selectedLayerId) return;
+    }
+    _selectedLayerId = null;
+  }
+
   /// The currently selected layer, or null when nothing is selected.
   Layer? get selectedLayer {
     if (_selectedLayerId == null) return null;
@@ -41,6 +115,7 @@ class MemeController extends ChangeNotifier {
 
   void setAspect(CanvasAspect aspect) {
     if (_config.aspect == aspect) return;
+    _pushHistory();
     _config = _config.copyWith(aspect: aspect);
     notifyListeners();
   }
@@ -49,6 +124,7 @@ class MemeController extends ChangeNotifier {
 
   /// Adds [layer] above all existing layers. Returns its id.
   String addLayer(Layer layer) {
+    _pushHistory();
     _config = _config.copyWith(layers: <Layer>[..._config.layers, layer]);
     _selectedLayerId = layer.id;
     notifyListeners();
@@ -99,6 +175,7 @@ class MemeController extends ChangeNotifier {
     // The background layer is structural — never let the user delete it
     // (the inspector hides the delete affordance, but defend the model too).
     if (target is BackgroundLayer) return;
+    _pushHistory();
     _config = _config.copyWith(
       layers: _config.layers.where((Layer l) => l.id != id).toList(),
     );
@@ -109,6 +186,7 @@ class MemeController extends ChangeNotifier {
   /// Replace [id] with the layer returned by [update]. Use this for any
   /// per-layer edit so the controller can also re-emit notifications.
   void updateLayer(String id, Layer Function(Layer) update) {
+    _pushHistory();
     _config = _config.copyWith(
       layers: _config.layers
           .map((Layer l) => l.id == id ? update(l) : l)
@@ -167,6 +245,7 @@ class MemeController extends ChangeNotifier {
     if (list.isNotEmpty && list.first is BackgroundLayer && to == 0) {
       to = 1;
     }
+    _pushHistory();
     list.removeAt(from);
     // After removeAt, the destination index shifts by 1 if we removed from
     // before it.

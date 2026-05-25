@@ -168,12 +168,19 @@ class _LayerSelectionOverlayState extends State<LayerSelectionOverlay> {
                     _moveStartPointerCanvas = p;
                     _moveStartLayerPos =
                         widget.controller.selectedLayer?.position;
+                    widget.controller.beginTransaction();
                   },
                   onPanUpdate: (DragUpdateDetails d) =>
                       _onMoveUpdate(d.globalPosition, canvasSize),
                   onPanEnd: (_) {
                     _moveStartPointerCanvas = null;
                     _moveStartLayerPos = null;
+                    widget.controller.endTransaction();
+                  },
+                  onPanCancel: () {
+                    _moveStartPointerCanvas = null;
+                    _moveStartLayerPos = null;
+                    widget.controller.endTransaction();
                   },
                 ),
               ),
@@ -201,6 +208,7 @@ class _LayerSelectionOverlayState extends State<LayerSelectionOverlay> {
                   _resizeStartLayerSize = current.size;
                   _resizeStartLayerRotation = current.rotation;
                   _resizeCorner = corner;
+                  widget.controller.beginTransaction();
                 },
                 onUpdate: (DragUpdateDetails d) =>
                     _onResizeUpdate(d.globalPosition, canvasSize),
@@ -209,6 +217,7 @@ class _LayerSelectionOverlayState extends State<LayerSelectionOverlay> {
                   _resizeStartLayerPos = null;
                   _resizeStartLayerSize = null;
                   _resizeCorner = null;
+                  widget.controller.endTransaction();
                 },
               ),
             // Rotate handle above the top edge.
@@ -227,6 +236,7 @@ class _LayerSelectionOverlayState extends State<LayerSelectionOverlay> {
                   );
                   _rotateStartLayerRotation =
                       widget.controller.selectedLayer?.rotation ?? 0;
+                  widget.controller.beginTransaction();
                 },
                 onUpdate: (DragUpdateDetails d) {
                   if (_rotateStartAngle == null) return;
@@ -243,7 +253,10 @@ class _LayerSelectionOverlayState extends State<LayerSelectionOverlay> {
                     _rotateStartLayerRotation + delta,
                   );
                 },
-                onEnd: () => _rotateStartAngle = null,
+                onEnd: () {
+                  _rotateStartAngle = null;
+                  widget.controller.endTransaction();
+                },
               ),
             ),
           ],
@@ -264,6 +277,7 @@ class _LayerSelectionOverlayState extends State<LayerSelectionOverlay> {
             if (p == null) return;
             _tailStartPointerCanvas = p;
             _tailStartTarget = layer.tailTarget;
+            widget.controller.beginTransaction();
           },
           onUpdate: (DragUpdateDetails d) {
             if (_tailStartPointerCanvas == null || _tailStartTarget == null) {
@@ -290,6 +304,7 @@ class _LayerSelectionOverlayState extends State<LayerSelectionOverlay> {
           onEnd: () {
             _tailStartPointerCanvas = null;
             _tailStartTarget = null;
+            widget.controller.endTransaction();
           },
         ),
       );
