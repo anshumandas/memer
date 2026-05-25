@@ -1,0 +1,76 @@
+{
+  "id": "anniversary",
+  "name": "Happy Anniversary",
+  "description": "Elegant text-only anniversary card — names, years together and a personal line on a deep navy background. No photo required.",
+  "category": "Greeting",
+  "aspect": "portrait4x5",
+  "layers": [
+    {
+      "kind": "background",
+      "id": "bg",
+      "color": "#0B1B3A"
+    },
+    {
+      "kind": "text",
+      "id": "hero",
+      "editable": true,
+      "promptLabel": "Headline",
+      "text": "Happy Anniversary",
+      "position": [0.5, 0.22],
+      "size": [0.9, 0.14],
+      "fontFamily": "Georgia",
+      "fontSize": 0.075,
+      "color": "#F4EAD5",
+      "bold": false,
+      "italic": true,
+      "align": "center",
+      "outlined": false
+    },
+    {
+      "kind": "text",
+      "id": "names",
+      "editable": true,
+      "promptLabel": "The two names",
+      "text": "Sam & Riley",
+      "position": [0.5, 0.42],
+      "size": [0.85, 0.16],
+      "fontFamily": "Georgia",
+      "fontSize": 0.095,
+      "color": "#D9B26B",
+      "bold": true,
+      "align": "center",
+      "outlined": false
+    },
+    {
+      "kind": "text",
+      "id": "years",
+      "editable": true,
+      "promptLabel": "How many years",
+      "text": "Ten wonderful years",
+      "position": [0.5, 0.55],
+      "size": [0.8, 0.07],
+      "fontFamily": "Roboto",
+      "fontSize": 0.035,
+      "color": "#F4EAD5",
+      "bold": false,
+      "align": "center",
+      "outlined": false
+    },
+    {
+      "kind": "text",
+      "id": "note",
+      "editable": true,
+      "promptLabel": "Personal note",
+      "text": "Here's to many more adventures, in-jokes and quiet evenings together.",
+      "position": [0.5, 0.72],
+      "size": [0.82, 0.18],
+      "fontFamily": "Georgia",
+      "fontSize": 0.038,
+      "color": "#E6DFC8",
+      "bold": false,
+      "italic": true,
+      "align": "center",
+      "outlined": false
+    }
+  ]
+}

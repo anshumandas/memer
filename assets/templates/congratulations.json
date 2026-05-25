@@ -1,0 +1,53 @@
+{
+  "id": "congratulations",
+  "name": "Congratulations!",
+  "description": "Bold congratulations card with a photo and a customisable subline — for promotions, graduations, new babies, anything worth celebrating.",
+  "category": "Greeting",
+  "aspect": "square",
+  "layers": [
+    {
+      "kind": "background",
+      "id": "bg",
+      "color": "#1A1A1A"
+    },
+    {
+      "kind": "image",
+      "id": "photo",
+      "slot": true,
+      "promptLabel": "Photo of the achiever",
+      "position": [0.5, 0.55],
+      "size": [1.0, 0.7]
+    },
+    {
+      "kind": "text",
+      "id": "headline",
+      "editable": true,
+      "promptLabel": "Headline",
+      "text": "CONGRATULATIONS!",
+      "position": [0.5, 0.1],
+      "size": [0.95, 0.12],
+      "fontFamily": "Impact",
+      "fontSize": 0.075,
+      "color": "#FFD86B",
+      "bold": true,
+      "align": "center",
+      "outlined": true
+    },
+    {
+      "kind": "text",
+      "id": "subline",
+      "editable": true,
+      "promptLabel": "Why they're being congratulated",
+      "text": "on your graduation, Jordan",
+      "position": [0.5, 0.92],
+      "size": [0.92, 0.08],
+      "fontFamily": "Georgia",
+      "fontSize": 0.04,
+      "color": "#FFFFFF",
+      "bold": false,
+      "italic": true,
+      "align": "center",
+      "outlined": true
+    }
+  ]
+}

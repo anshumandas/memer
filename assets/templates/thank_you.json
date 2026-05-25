@@ -1,0 +1,61 @@
+{
+  "id": "thank_you",
+  "name": "Thank You",
+  "description": "Warm, text-only thank-you card on a cream background. Drop in the recipient's name and a personal line.",
+  "category": "Greeting",
+  "aspect": "square",
+  "layers": [
+    {
+      "kind": "background",
+      "id": "bg",
+      "color": "#F5ECD7"
+    },
+    {
+      "kind": "text",
+      "id": "hero",
+      "editable": true,
+      "promptLabel": "Headline",
+      "text": "Thank You",
+      "position": [0.5, 0.32],
+      "size": [0.9, 0.22],
+      "fontFamily": "Georgia",
+      "fontSize": 0.14,
+      "color": "#2A1E12",
+      "bold": false,
+      "italic": true,
+      "align": "center",
+      "outlined": false
+    },
+    {
+      "kind": "text",
+      "id": "recipient",
+      "editable": true,
+      "promptLabel": "Who you're thanking",
+      "text": "— for Priya",
+      "position": [0.5, 0.5],
+      "size": [0.7, 0.07],
+      "fontFamily": "Georgia",
+      "fontSize": 0.038,
+      "color": "#7A5E3A",
+      "bold": false,
+      "italic": true,
+      "align": "center",
+      "outlined": false
+    },
+    {
+      "kind": "text",
+      "id": "note",
+      "editable": true,
+      "promptLabel": "Personal message",
+      "text": "Your help meant more than you know.\nTruly, thank you.",
+      "position": [0.5, 0.68],
+      "size": [0.82, 0.2],
+      "fontFamily": "Roboto",
+      "fontSize": 0.04,
+      "color": "#3A2A18",
+      "bold": false,
+      "align": "center",
+      "outlined": false
+    }
+  ]
+}
