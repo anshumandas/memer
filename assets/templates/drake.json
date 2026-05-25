@@ -1,0 +1,60 @@
+{
+  "id": "drake",
+  "name": "Drake Hotline Bling",
+  "description": "Two stacked panels — top panel = the thing being rejected, bottom panel = the thing being approved. Pick (or take) any two pictures for the panels.",
+  "category": "Reaction",
+  "aspect": "square",
+  "layers": [
+    {
+      "kind": "background",
+      "id": "bg",
+      "color": "#FFFFFF"
+    },
+    {
+      "kind": "image",
+      "id": "panel_no",
+      "slot": true,
+      "promptLabel": "Top panel image (rejecting)",
+      "position": [0.25, 0.25],
+      "size": [0.5, 0.5]
+    },
+    {
+      "kind": "image",
+      "id": "panel_yes",
+      "slot": true,
+      "promptLabel": "Bottom panel image (approving)",
+      "position": [0.25, 0.75],
+      "size": [0.5, 0.5]
+    },
+    {
+      "kind": "text",
+      "id": "label_no",
+      "editable": true,
+      "promptLabel": "Top label (what gets rejected)",
+      "text": "Writing tests after the fact",
+      "position": [0.75, 0.25],
+      "size": [0.48, 0.45],
+      "fontFamily": "Roboto",
+      "fontSize": 0.05,
+      "color": "#111111",
+      "bold": true,
+      "align": "left",
+      "outlined": false
+    },
+    {
+      "kind": "text",
+      "id": "label_yes",
+      "editable": true,
+      "promptLabel": "Bottom label (what gets approved)",
+      "text": "Writing tests first",
+      "position": [0.75, 0.75],
+      "size": [0.48, 0.45],
+      "fontFamily": "Roboto",
+      "fontSize": 0.05,
+      "color": "#111111",
+      "bold": true,
+      "align": "left",
+      "outlined": false
+    }
+  ]
+}

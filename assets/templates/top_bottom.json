@@ -1,0 +1,52 @@
+{
+  "id": "top_bottom",
+  "name": "Top Text / Bottom Text",
+  "description": "The classic Impact-style caption above and below a single image. The bread-and-butter of meme formats.",
+  "category": "Classic",
+  "aspect": "square",
+  "layers": [
+    {
+      "kind": "background",
+      "id": "bg",
+      "color": "#000000"
+    },
+    {
+      "kind": "image",
+      "id": "photo",
+      "slot": true,
+      "promptLabel": "Background image",
+      "position": [0.5, 0.5],
+      "size": [1.0, 1.0]
+    },
+    {
+      "kind": "text",
+      "id": "top",
+      "editable": true,
+      "promptLabel": "Top caption",
+      "text": "WHEN YOU FINALLY",
+      "position": [0.5, 0.09],
+      "size": [0.95, 0.18],
+      "fontFamily": "Impact",
+      "fontSize": 0.1,
+      "color": "#FFFFFF",
+      "bold": true,
+      "align": "center",
+      "outlined": true
+    },
+    {
+      "kind": "text",
+      "id": "bottom",
+      "editable": true,
+      "promptLabel": "Bottom caption",
+      "text": "READ THE DOCS",
+      "position": [0.5, 0.91],
+      "size": [0.95, 0.18],
+      "fontFamily": "Impact",
+      "fontSize": 0.1,
+      "color": "#FFFFFF",
+      "bold": true,
+      "align": "center",
+      "outlined": true
+    }
+  ]
+}

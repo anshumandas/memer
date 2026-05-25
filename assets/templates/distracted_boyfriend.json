@@ -1,0 +1,79 @@
+{
+  "id": "distracted_boyfriend",
+  "name": "Distracted Boyfriend",
+  "description": "Three labelled figures: the new thing turning the head, the partner being neglected, and the person doing the looking. Drop in the stock photo (or any photo with three subjects) and label each one.",
+  "category": "Reaction",
+  "aspect": "landscape16x9",
+  "layers": [
+    {
+      "kind": "background",
+      "id": "bg",
+      "color": "#000000"
+    },
+    {
+      "kind": "image",
+      "id": "photo",
+      "slot": true,
+      "promptLabel": "Photo with three subjects",
+      "position": [0.5, 0.5],
+      "size": [1.0, 1.0]
+    },
+    {
+      "kind": "callout",
+      "id": "label_temptation",
+      "editable": true,
+      "promptLabel": "Label for the new thing (left figure)",
+      "text": "TypeScript",
+      "shape": "rectangle",
+      "position": [0.18, 0.18],
+      "size": [0.28, 0.1],
+      "fillColor": "#FFFFFF",
+      "borderColor": "#111111",
+      "borderWidth": 2.0,
+      "textColor": "#111111",
+      "fontFamily": "Roboto",
+      "fontSize": 0.04,
+      "bold": true,
+      "tailTarget": [0.2, 0.55],
+      "showTail": false
+    },
+    {
+      "kind": "callout",
+      "id": "label_boyfriend",
+      "editable": true,
+      "promptLabel": "Label for the looker (middle figure)",
+      "text": "Me",
+      "shape": "rectangle",
+      "position": [0.5, 0.18],
+      "size": [0.2, 0.1],
+      "fillColor": "#FFFFFF",
+      "borderColor": "#111111",
+      "borderWidth": 2.0,
+      "textColor": "#111111",
+      "fontFamily": "Roboto",
+      "fontSize": 0.04,
+      "bold": true,
+      "tailTarget": [0.5, 0.55],
+      "showTail": false
+    },
+    {
+      "kind": "callout",
+      "id": "label_partner",
+      "editable": true,
+      "promptLabel": "Label for the neglected (right figure)",
+      "text": "JavaScript",
+      "shape": "rectangle",
+      "position": [0.82, 0.18],
+      "size": [0.28, 0.1],
+      "fillColor": "#FFFFFF",
+      "borderColor": "#111111",
+      "borderWidth": 2.0,
+      "textColor": "#111111",
+      "fontFamily": "Roboto",
+      "fontSize": 0.04,
+      "bold": true,
+      "tailTarget": [0.8, 0.55],
+      "showTail": false
+    }
+  ]
+}

@@ -23,14 +23,19 @@ import '../widgets/selection_overlay.dart';
 /// On wide screens all three sit side-by-side. On narrow screens the layers
 /// and inspector become tabs in a bottom sheet, keeping the canvas in focus.
 class EditorScreen extends StatefulWidget {
-  const EditorScreen({super.key});
+  const EditorScreen({super.key, this.initialConfig});
+
+  /// Optional starting point — used by the template wizard to hand the user a
+  /// pre-populated meme. When null, the editor seeds itself with a single
+  /// background layer (the historical behaviour).
+  final MemeConfig? initialConfig;
 
   @override
   State<EditorScreen> createState() => _EditorScreenState();
 }
 
 class _EditorScreenState extends State<EditorScreen> {
-  final MemeController _controller = MemeController();
+  late final MemeController _controller = MemeController(widget.initialConfig);
   final GlobalKey _repaintKey = GlobalKey();
 
   final ImageExportService _exporter = const ImageExportService();

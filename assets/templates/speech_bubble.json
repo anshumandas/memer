@@ -1,0 +1,41 @@
+{
+  "id": "speech_bubble",
+  "name": "Speech Bubble Overlay",
+  "description": "A single image with a classic speech bubble layered on top. Move the bubble's tail in the editor to point at whoever is talking.",
+  "category": "Reaction",
+  "aspect": "square",
+  "layers": [
+    {
+      "kind": "background",
+      "id": "bg",
+      "color": "#1E1E1E"
+    },
+    {
+      "kind": "image",
+      "id": "photo",
+      "slot": true,
+      "promptLabel": "Background image",
+      "position": [0.5, 0.5],
+      "size": [1.0, 1.0]
+    },
+    {
+      "kind": "callout",
+      "id": "bubble",
+      "editable": true,
+      "promptLabel": "What they're saying",
+      "text": "It works on my machine.",
+      "shape": "speechRound",
+      "position": [0.7, 0.22],
+      "size": [0.5, 0.22],
+      "fillColor": "#FFFFFF",
+      "borderColor": "#111111",
+      "borderWidth": 2.0,
+      "textColor": "#111111",
+      "fontFamily": "Roboto",
+      "fontSize": 0.045,
+      "bold": false,
+      "tailTarget": [0.4, 0.65],
+      "showTail": true
+    }
+  ]
+}

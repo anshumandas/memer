@@ -1,0 +1,60 @@
+{
+  "id": "two_buttons",
+  "name": "Two Buttons",
+  "description": "Sweaty character agonising between two impossible-to-choose buttons. Drop in your character photo and label the two buttons.",
+  "category": "Decision",
+  "aspect": "portrait4x5",
+  "layers": [
+    {
+      "kind": "background",
+      "id": "bg",
+      "color": "#FFFFFF"
+    },
+    {
+      "kind": "image",
+      "id": "character",
+      "slot": true,
+      "promptLabel": "Sweating character image",
+      "position": [0.5, 0.7],
+      "size": [1.0, 0.6]
+    },
+    {
+      "kind": "callout",
+      "id": "button_left",
+      "editable": true,
+      "promptLabel": "Left button label",
+      "text": "Ship it",
+      "shape": "rectangle",
+      "position": [0.3, 0.18],
+      "size": [0.35, 0.12],
+      "fillColor": "#E94545",
+      "borderColor": "#111111",
+      "borderWidth": 2.0,
+      "textColor": "#FFFFFF",
+      "fontFamily": "Roboto",
+      "fontSize": 0.035,
+      "bold": true,
+      "tailTarget": [0.3, 0.4],
+      "showTail": false
+    },
+    {
+      "kind": "callout",
+      "id": "button_right",
+      "editable": true,
+      "promptLabel": "Right button label",
+      "text": "Refactor first",
+      "shape": "rectangle",
+      "position": [0.7, 0.18],
+      "size": [0.35, 0.12],
+      "fillColor": "#E94545",
+      "borderColor": "#111111",
+      "borderWidth": 2.0,
+      "textColor": "#FFFFFF",
+      "fontFamily": "Roboto",
+      "fontSize": 0.035,
+      "bold": true,
+      "tailTarget": [0.7, 0.4],
+      "showTail": false
+    }
+  ]
+}

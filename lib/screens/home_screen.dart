@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'editor_screen.dart';
+import 'template_gallery_screen.dart';
 
 /// Simple landing screen with a call to action.
 class HomeScreen extends StatelessWidget {
@@ -64,6 +65,18 @@ class HomeScreen extends StatelessWidget {
                   },
                   icon: const Icon(Icons.brush_outlined),
                   label: const Text('Create a meme'),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const TemplateGalleryScreen(),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.dashboard_customize_outlined),
+                  label: const Text('Start from a template'),
                 ),
               ],
             ),

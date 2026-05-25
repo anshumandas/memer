@@ -1,0 +1,49 @@
+{
+  "id": "wojak_yelling",
+  "name": "Yelling Pointing",
+  "description": "Two-panel meme of someone yelling on one side, the unbothered target on the other. Add a shouty speech bubble.",
+  "category": "Reaction",
+  "aspect": "landscape16x9",
+  "layers": [
+    {
+      "kind": "background",
+      "id": "bg",
+      "color": "#FFFFFF"
+    },
+    {
+      "kind": "image",
+      "id": "yeller",
+      "slot": true,
+      "promptLabel": "Person yelling (left)",
+      "position": [0.25, 0.5],
+      "size": [0.5, 1.0]
+    },
+    {
+      "kind": "image",
+      "id": "target",
+      "slot": true,
+      "promptLabel": "Unbothered target (right)",
+      "position": [0.75, 0.5],
+      "size": [0.5, 1.0]
+    },
+    {
+      "kind": "callout",
+      "id": "shout",
+      "editable": true,
+      "promptLabel": "What they're yelling",
+      "text": "YOU PROMISED PRODUCTION READY!!",
+      "shape": "speechSharp",
+      "position": [0.5, 0.18],
+      "size": [0.5, 0.2],
+      "fillColor": "#FFFFFF",
+      "borderColor": "#111111",
+      "borderWidth": 2.5,
+      "textColor": "#111111",
+      "fontFamily": "Impact",
+      "fontSize": 0.05,
+      "bold": true,
+      "tailTarget": [0.3, 0.45],
+      "showTail": true
+    }
+  ]
+}

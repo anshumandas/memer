@@ -1,0 +1,38 @@
+{
+  "id": "change_my_mind",
+  "name": "Change My Mind",
+  "description": "Steven Crowder sat behind a sign daring you to argue. One image, one bold opinion.",
+  "category": "Statement",
+  "aspect": "landscape16x9",
+  "layers": [
+    {
+      "kind": "background",
+      "id": "bg",
+      "color": "#000000"
+    },
+    {
+      "kind": "image",
+      "id": "photo",
+      "slot": true,
+      "promptLabel": "Person-with-sign image",
+      "position": [0.5, 0.5],
+      "size": [1.0, 1.0]
+    },
+    {
+      "kind": "text",
+      "id": "opinion",
+      "editable": true,
+      "promptLabel": "Your hot take",
+      "text": "Tabs are better than spaces.\nChange my mind.",
+      "position": [0.42, 0.72],
+      "size": [0.45, 0.22],
+      "rotation": -0.05,
+      "fontFamily": "Roboto",
+      "fontSize": 0.045,
+      "color": "#111111",
+      "bold": true,
+      "align": "center",
+      "outlined": false
+    }
+  ]
+}

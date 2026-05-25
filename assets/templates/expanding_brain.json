@@ -1,0 +1,106 @@
+{
+  "id": "expanding_brain",
+  "name": "Expanding Brain",
+  "description": "Four stacked tiers of escalating absurdity, each with its own image + caption. Bottom = mundane, top = cosmic galaxy brain.",
+  "category": "Ranking",
+  "aspect": "portrait4x5",
+  "layers": [
+    {
+      "kind": "background",
+      "id": "bg",
+      "color": "#FFFFFF"
+    },
+    {
+      "kind": "image",
+      "id": "tier_1",
+      "slot": true,
+      "promptLabel": "Tier 1 image (mundane)",
+      "position": [0.25, 0.125],
+      "size": [0.5, 0.25]
+    },
+    {
+      "kind": "image",
+      "id": "tier_2",
+      "slot": true,
+      "promptLabel": "Tier 2 image",
+      "position": [0.25, 0.375],
+      "size": [0.5, 0.25]
+    },
+    {
+      "kind": "image",
+      "id": "tier_3",
+      "slot": true,
+      "promptLabel": "Tier 3 image",
+      "position": [0.25, 0.625],
+      "size": [0.5, 0.25]
+    },
+    {
+      "kind": "image",
+      "id": "tier_4",
+      "slot": true,
+      "promptLabel": "Tier 4 image (galaxy brain)",
+      "position": [0.25, 0.875],
+      "size": [0.5, 0.25]
+    },
+    {
+      "kind": "text",
+      "id": "caption_1",
+      "editable": true,
+      "promptLabel": "Tier 1 caption",
+      "text": "Use a for loop",
+      "position": [0.75, 0.125],
+      "size": [0.48, 0.22],
+      "fontFamily": "Roboto",
+      "fontSize": 0.035,
+      "color": "#111111",
+      "bold": true,
+      "align": "left",
+      "outlined": false
+    },
+    {
+      "kind": "text",
+      "id": "caption_2",
+      "editable": true,
+      "promptLabel": "Tier 2 caption",
+      "text": "Use .map()",
+      "position": [0.75, 0.375],
+      "size": [0.48, 0.22],
+      "fontFamily": "Roboto",
+      "fontSize": 0.035,
+      "color": "#111111",
+      "bold": true,
+      "align": "left",
+      "outlined": false
+    },
+    {
+      "kind": "text",
+      "id": "caption_3",
+      "editable": true,
+      "promptLabel": "Tier 3 caption",
+      "text": "Use .reduce()",
+      "position": [0.75, 0.625],
+      "size": [0.48, 0.22],
+      "fontFamily": "Roboto",
+      "fontSize": 0.035,
+      "color": "#111111",
+      "bold": true,
+      "align": "left",
+      "outlined": false
+    },
+    {
+      "kind": "text",
+      "id": "caption_4",
+      "editable": true,
+      "promptLabel": "Tier 4 caption (galaxy brain)",
+      "text": "Write your own functor",
+      "position": [0.75, 0.875],
+      "size": [0.48, 0.22],
+      "fontFamily": "Roboto",
+      "fontSize": 0.035,
+      "color": "#111111",
+      "bold": true,
+      "align": "left",
+      "outlined": false
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "id": "side_by_side",
+  "name": "Side by Side Comparison",
+  "description": "Two-panel before/after, or this/that, with a label under each. Works for any A-vs-B comparison.",
+  "category": "Comparison",
+  "aspect": "landscape16x9",
+  "layers": [
+    {
+      "kind": "background",
+      "id": "bg",
+      "color": "#1E1E1E"
+    },
+    {
+      "kind": "image",
+      "id": "left",
+      "slot": true,
+      "promptLabel": "Left image",
+      "position": [0.25, 0.4],
+      "size": [0.48, 0.7]
+    },
+    {
+      "kind": "image",
+      "id": "right",
+      "slot": true,
+      "promptLabel": "Right image",
+      "position": [0.75, 0.4],
+      "size": [0.48, 0.7]
+    },
+    {
+      "kind": "text",
+      "id": "label_left",
+      "editable": true,
+      "promptLabel": "Left label",
+      "text": "BEFORE",
+      "position": [0.25, 0.86],
+      "size": [0.45, 0.12],
+      "fontFamily": "Impact",
+      "fontSize": 0.075,
+      "color": "#FFFFFF",
+      "bold": true,
+      "align": "center",
+      "outlined": true
+    },
+    {
+      "kind": "text",
+      "id": "label_right",
+      "editable": true,
+      "promptLabel": "Right label",
+      "text": "AFTER",
+      "position": [0.75, 0.86],
+      "size": [0.45, 0.12],
+      "fontFamily": "Impact",
+      "fontSize": 0.075,
+      "color": "#FFFFFF",
+      "bold": true,
+      "align": "center",
+      "outlined": true
+    }
+  ]
+}

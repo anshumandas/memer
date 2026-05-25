@@ -1,0 +1,59 @@
+{
+  "id": "quote_card",
+  "name": "Quote Card",
+  "description": "Instagram-style quote on a flat colour background, with attribution underneath. No image required.",
+  "category": "Quote",
+  "aspect": "square",
+  "layers": [
+    {
+      "kind": "background",
+      "id": "bg",
+      "color": "#0E1B2C"
+    },
+    {
+      "kind": "text",
+      "id": "quote",
+      "editable": true,
+      "promptLabel": "The quote",
+      "text": "“Premature optimization is the root of all evil.”",
+      "position": [0.5, 0.42],
+      "size": [0.84, 0.5],
+      "fontFamily": "Georgia",
+      "fontSize": 0.075,
+      "color": "#F4EAD5",
+      "bold": false,
+      "italic": true,
+      "align": "center",
+      "outlined": false
+    },
+    {
+      "kind": "text",
+      "id": "author",
+      "editable": true,
+      "promptLabel": "Attribution",
+      "text": "— Donald Knuth",
+      "position": [0.5, 0.78],
+      "size": [0.7, 0.08],
+      "fontFamily": "Roboto",
+      "fontSize": 0.035,
+      "color": "#D9B26B",
+      "bold": true,
+      "align": "center",
+      "outlined": false
+    },
+    {
+      "kind": "hyperlink",
+      "id": "source",
+      "editable": true,
+      "promptLabel": "Source URL (optional)",
+      "url": "",
+      "label": "",
+      "position": [0.5, 0.92],
+      "size": [0.8, 0.05],
+      "fontFamily": "Roboto",
+      "fontSize": 0.028,
+      "color": "#9FB6D1",
+      "align": "center"
+    }
+  ]
+}
