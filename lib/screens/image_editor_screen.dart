@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../services/image_processing_service.dart';
 
@@ -92,86 +94,75 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
     });
   }
 
-  // ---------------------------------------------------------------- crop
-
-  Future<void> _applyCrop() async {
+  /// Run a heavy image op while pinning [_busy] = true. Waits one frame
+  /// after flipping the flag so the "Processing…" overlay actually paints
+  /// before the work starts; on failure, surfaces [errorLabel] in a snack.
+  Future<void> _runBusy(
+    String errorLabel,
+    Future<Uint8List> Function() op,
+  ) async {
     setState(() => _busy = true);
+    await SchedulerBinding.instance.endOfFrame;
     try {
-      final Uint8List next = await _svc.cropPng(_working, _cropFractional);
-      _working = next;
+      _working = await op();
       await _decodeWorking();
     } catch (e) {
-      _snack('Could not crop: $e');
+      _snack('$errorLabel: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
+
+  // ---------------------------------------------------------------- crop
+
+  Future<void> _applyCrop() =>
+      _runBusy('Could not crop', () => _svc.cropPng(_working, _cropFractional));
 
   // -------------------------------------------------------------- rotate
 
-  Future<void> _rotate(int quarters) async {
-    setState(() => _busy = true);
-    try {
-      final Uint8List next = await _svc.rotateQuarterPng(_working, quarters);
-      _working = next;
-      await _decodeWorking();
-    } catch (e) {
-      _snack('Could not rotate: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
+  Future<void> _rotate(int quarters) => _runBusy(
+    'Could not rotate',
+    () => _svc.rotateQuarterPng(_working, quarters),
+  );
 
-  Future<void> _applyFreeRotate() async {
-    if (_freeRotateDeg.abs() < 0.1) return;
-    setState(() => _busy = true);
-    try {
-      final Uint8List next = await _svc.rotateAnyPng(_working, _freeRotateDeg);
-      _working = next;
-      await _decodeWorking();
-    } catch (e) {
-      _snack('Could not rotate: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+  Future<void> _applyFreeRotate() {
+    if (_freeRotateDeg.abs() < 0.1) return Future<void>.value();
+    return _runBusy(
+      'Could not rotate',
+      () => _svc.rotateAnyPng(_working, _freeRotateDeg),
+    );
   }
 
   // ---------------------------------------------------------------- mask
 
-  Future<void> _applyErasures() async {
-    if (_maskOps.isEmpty) return;
-    setState(() => _busy = true);
-    try {
-      final List<Path> erase = <Path>[];
-      final List<FloodMask> floods = <FloodMask>[];
-      final List<Path> restore = <Path>[];
-      // Order matters in the service too: we currently apply *all* erase
-      // ops, then all restore ops — so any erase made after a restore in
-      // the timeline is preserved, but any restore made after an erase
-      // overrides the erase. That's the intent of the restore brush.
-      for (final _MaskOp op in _maskOps) {
-        switch (op) {
-          case _EraseStroke():
-            erase.add(op.path);
-          case _RestoreStroke():
-            restore.add(op.path);
-          case _WandFlood():
-            floods.add(op.mask);
-        }
+  Future<void> _applyErasures() {
+    if (_maskOps.isEmpty) return Future<void>.value();
+    final List<Path> erase = <Path>[];
+    final List<FloodMask> floods = <FloodMask>[];
+    final List<Path> restore = <Path>[];
+    // Order matters in the service too: we currently apply *all* erase
+    // ops, then all restore ops — so any erase made after a restore in
+    // the timeline is preserved, but any restore made after an erase
+    // overrides the erase. That's the intent of the restore brush.
+    for (final _MaskOp op in _maskOps) {
+      switch (op) {
+        case _EraseStroke():
+          erase.add(op.path);
+        case _RestoreStroke():
+          restore.add(op.path);
+        case _WandFlood():
+          floods.add(op.mask);
       }
-      final Uint8List next = await _svc.applyErasures(
+    }
+    return _runBusy(
+      'Could not apply erasures',
+      () => _svc.applyErasures(
         _working,
         erasePaths: erase,
         floodMasks: floods,
         restorePaths: restore,
-      );
-      _working = next;
-      await _decodeWorking();
-    } catch (e) {
-      _snack('Could not apply erasures: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+      ),
+    );
   }
 
   void _appendMaskOp(_MaskOp op) {
@@ -255,18 +246,23 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
       ),
       body: _workingImage == null
           ? const Center(child: CircularProgressIndicator())
-          : Column(
+          : Stack(
               children: <Widget>[
-                Expanded(
-                  child: TabBarView(
-                    controller: _tabs,
-                    children: <Widget>[
-                      _buildCropTab(),
-                      _buildRotateTab(),
-                      _buildMaskTab(),
-                    ],
-                  ),
+                Column(
+                  children: <Widget>[
+                    Expanded(
+                      child: TabBarView(
+                        controller: _tabs,
+                        children: <Widget>[
+                          _buildCropTab(),
+                          _buildRotateTab(),
+                          _buildMaskTab(),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
+                if (_busy) const _ProcessingOverlay(),
               ],
             ),
     );
@@ -358,20 +354,37 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
   // ========================================================== rotate tab
 
   Widget _buildRotateTab() {
+    final ui.Image image = _workingImage!;
+    final double rad = _freeRotateDeg * math.pi / 180;
     return Column(
       children: <Widget>[
         Expanded(
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Center(
-              child: _AspectFitImage(
-                image: _workingImage!,
-                child: (_) => IgnorePointer(
-                  child: Transform.rotate(
-                    angle: _freeRotateDeg * 3.14159265358979 / 180,
-                    child: const SizedBox.expand(),
-                  ),
-                ),
+              child: LayoutBuilder(
+                builder: (BuildContext context, BoxConstraints constraints) {
+                  // Pick the largest base image-size whose rotated bounding
+                  // box still fits the available area. Without this the image
+                  // would clip its own corners as the user spins past 0°.
+                  final double imgAspect = image.width / image.height;
+                  final double cosA = math.cos(rad).abs();
+                  final double sinA = math.sin(rad).abs();
+                  final double rotW = cosA + sinA / imgAspect;
+                  final double rotH = sinA + cosA / imgAspect;
+                  final double byW = constraints.maxWidth / rotW;
+                  final double byH = constraints.maxHeight / rotH;
+                  final double baseW = math.min(byW, byH);
+                  final double baseH = baseW / imgAspect;
+                  return Transform.rotate(
+                    angle: rad,
+                    child: SizedBox(
+                      width: baseW,
+                      height: baseH,
+                      child: RawImage(image: image, fit: BoxFit.fill),
+                    ),
+                  );
+                },
               ),
             ),
           ),
@@ -505,69 +518,92 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
   }
 
   Widget _maskToolbar() {
+    final bool showTolerance = _maskTool == _MaskTool.wand;
+    final bool showBrush =
+        _maskTool == _MaskTool.brushErase ||
+        _maskTool == _MaskTool.brushRestore;
     return Material(
       color: Theme.of(context).colorScheme.surfaceContainerHighest,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          children: <Widget>[
-            SegmentedButton<_MaskTool>(
-              showSelectedIcon: false,
-              segments: const <ButtonSegment<_MaskTool>>[
-                ButtonSegment<_MaskTool>(
-                  value: _MaskTool.brushErase,
-                  icon: Icon(Icons.brush),
-                  label: Text('Erase'),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: <Widget>[
+              SegmentedButton<_MaskTool>(
+                showSelectedIcon: false,
+                // Icon-only with tooltips so all five tools fit comfortably
+                // on phone-width screens without wrapping the toolbar.
+                segments: const <ButtonSegment<_MaskTool>>[
+                  ButtonSegment<_MaskTool>(
+                    value: _MaskTool.brushErase,
+                    icon: Icon(Icons.brush),
+                    tooltip: 'Erase brush',
+                  ),
+                  ButtonSegment<_MaskTool>(
+                    value: _MaskTool.brushRestore,
+                    icon: Icon(Icons.auto_fix_normal),
+                    tooltip: 'Restore brush',
+                  ),
+                  ButtonSegment<_MaskTool>(
+                    value: _MaskTool.wand,
+                    icon: Icon(Icons.auto_fix_high),
+                    tooltip: 'Magic wand',
+                  ),
+                  ButtonSegment<_MaskTool>(
+                    value: _MaskTool.freeLasso,
+                    icon: Icon(Icons.gesture),
+                    tooltip: 'Free lasso',
+                  ),
+                  ButtonSegment<_MaskTool>(
+                    value: _MaskTool.magneticLasso,
+                    icon: Icon(Icons.timeline),
+                    tooltip: 'Magnetic lasso',
+                  ),
+                ],
+                selected: <_MaskTool>{_maskTool},
+                onSelectionChanged: (Set<_MaskTool> s) =>
+                    setState(() => _maskTool = s.first),
+              ),
+              const SizedBox(width: 16),
+              if (showTolerance) ...<Widget>[
+                const Text('Tolerance'),
+                SizedBox(
+                  width: 160,
+                  child: Slider(
+                    min: 5,
+                    max: 200,
+                    value: _wandTolerance.toDouble(),
+                    onChanged: (double v) =>
+                        setState(() => _wandTolerance = v.round()),
+                  ),
                 ),
-                ButtonSegment<_MaskTool>(
-                  value: _MaskTool.brushRestore,
-                  icon: Icon(Icons.auto_fix_normal),
-                  label: Text('Restore'),
+                Text('$_wandTolerance'),
+              ] else if (showBrush) ...<Widget>[
+                const Text('Brush'),
+                SizedBox(
+                  width: 160,
+                  child: Slider(
+                    min: 4,
+                    max: 160,
+                    value: _brushSize,
+                    onChanged: (double v) => setState(() => _brushSize = v),
+                  ),
                 ),
-                ButtonSegment<_MaskTool>(
-                  value: _MaskTool.wand,
-                  icon: Icon(Icons.auto_fix_high),
-                  label: Text('Wand'),
-                ),
+                Text('${_brushSize.round()}px'),
               ],
-              selected: <_MaskTool>{_maskTool},
-              onSelectionChanged: (Set<_MaskTool> s) =>
-                  setState(() => _maskTool = s.first),
-            ),
-            const SizedBox(width: 16),
-            if (_maskTool == _MaskTool.wand) ...<Widget>[
-              const Text('Tolerance'),
-              SizedBox(
-                width: 160,
-                child: Slider(
-                  min: 5,
-                  max: 200,
-                  value: _wandTolerance.toDouble(),
-                  onChanged: (double v) =>
-                      setState(() => _wandTolerance = v.round()),
-                ),
-              ),
-              Text('$_wandTolerance'),
-            ] else ...<Widget>[
-              const Text('Brush'),
-              SizedBox(
-                width: 160,
-                child: Slider(
-                  min: 4,
-                  max: 160,
-                  value: _brushSize,
-                  onChanged: (double v) => setState(() => _brushSize = v),
-                ),
-              ),
-              Text('${_brushSize.round()}px'),
+              const SizedBox(width: 24),
+              Text(switch (_maskTool) {
+                _MaskTool.brushErase => 'Drag to erase',
+                _MaskTool.brushRestore => 'Drag to bring pixels back',
+                _MaskTool.wand => 'Tap a region to erase',
+                _MaskTool.freeLasso => 'Drag a freehand loop; release to erase',
+                _MaskTool.magneticLasso =>
+                  'Tap to drop anchors (snaps to edges); '
+                      'click the start dot to close',
+              }, style: Theme.of(context).textTheme.bodySmall),
             ],
-            const Spacer(),
-            Text(switch (_maskTool) {
-              _MaskTool.brushErase => 'Drag to erase',
-              _MaskTool.brushRestore => 'Drag to bring pixels back',
-              _MaskTool.wand => 'Tap a region to erase',
-            }, style: Theme.of(context).textTheme.bodySmall),
-          ],
+          ),
         ),
       ),
     );
@@ -594,7 +630,40 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
 
 // ============================================================ supporting types
 
-enum _MaskTool { brushErase, brushRestore, wand }
+/// Full-screen modal scrim shown while a crop/rotate/erasure runs. The work
+/// itself executes on a background isolate, but the overlay also intercepts
+/// pointer events so the user can't queue a second op mid-flight.
+class _ProcessingOverlay extends StatelessWidget {
+  const _ProcessingOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: ColoredBox(
+        color: Colors.black54,
+        child: AbsorbPointer(
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text(
+                  'Processing…',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleMedium?.copyWith(color: Colors.white),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+enum _MaskTool { brushErase, brushRestore, wand, freeLasso, magneticLasso }
 
 /// Sealed family of mask-editor operations, applied in insertion order.
 sealed class _MaskOp {
@@ -990,6 +1059,11 @@ class _MaskEditorOverlayState extends State<_MaskEditorOverlay> {
   bool _wandBusy = false;
   // Pointer position in display pixels — used to draw the brush cursor.
   Offset? _hover;
+  // Decoded RGBA of [widget.workingBytes], cached so the wand BFS can run
+  // without re-decoding the PNG on every tap. Invalidated when workingBytes
+  // changes identity (which happens after each Apply erasures / crop / rotate).
+  RawRgba? _rgbaCache;
+  Uint8List? _rgbaCacheFor;
 
   final ImageProcessingService _svc = const ImageProcessingService();
 
@@ -1013,8 +1087,37 @@ class _MaskEditorOverlayState extends State<_MaskEditorOverlay> {
       widget.tool == _MaskTool.brushErase ||
       widget.tool == _MaskTool.brushRestore;
 
+  bool get _isLasso =>
+      widget.tool == _MaskTool.freeLasso ||
+      widget.tool == _MaskTool.magneticLasso;
+
+  // ============================================================ brush
+
   void _onPanStart(DragStartDetails d) {
-    if (!_isBrush) return;
+    if (_isBrush) {
+      _startBrushStroke(d);
+    } else if (widget.tool == _MaskTool.freeLasso) {
+      _startFreeLasso(d);
+    }
+  }
+
+  void _onPanUpdate(DragUpdateDetails d) {
+    if (_isBrush) {
+      _updateBrushStroke(d);
+    } else if (widget.tool == _MaskTool.freeLasso) {
+      _updateFreeLasso(d);
+    }
+  }
+
+  void _onPanEnd(DragEndDetails d) {
+    if (_isBrush) {
+      _currentPath = null;
+    } else if (widget.tool == _MaskTool.freeLasso) {
+      _endFreeLasso();
+    }
+  }
+
+  void _startBrushStroke(DragStartDetails d) {
     final Offset imgPt = _displayToImage(d.localPosition);
     final Path p = Path()
       ..addOval(Rect.fromCircle(center: imgPt, radius: widget.brushSize));
@@ -1026,8 +1129,8 @@ class _MaskEditorOverlayState extends State<_MaskEditorOverlay> {
     _repaintTick.value++;
   }
 
-  void _onPanUpdate(DragUpdateDetails d) {
-    if (!_isBrush || _currentPath == null) return;
+  void _updateBrushStroke(DragUpdateDetails d) {
+    if (_currentPath == null) return;
     final Offset imgPt = _displayToImage(d.localPosition);
     _currentPath!.addOval(
       Rect.fromCircle(center: imgPt, radius: widget.brushSize),
@@ -1036,17 +1139,24 @@ class _MaskEditorOverlayState extends State<_MaskEditorOverlay> {
     _repaintTick.value++;
   }
 
-  void _onPanEnd(DragEndDetails _) {
-    _currentPath = null;
-  }
+  // ============================================================ tap
 
   Future<void> _onTap(TapDownDetails d) async {
-    if (widget.tool != _MaskTool.wand || _wandBusy) return;
+    if (widget.tool == _MaskTool.wand) {
+      await _runWandTap(d);
+    } else if (widget.tool == _MaskTool.magneticLasso) {
+      await _onMagneticLassoTap(d);
+    }
+  }
+
+  Future<void> _runWandTap(TapDownDetails d) async {
+    if (_wandBusy) return;
     final Offset imgPt = _displayToImage(d.localPosition);
     setState(() => _wandBusy = true);
     try {
-      final FloodMask m = await _svc.floodFill(
-        widget.workingBytes,
+      final RawRgba rgba = await _ensureRgba();
+      final FloodMask m = await _svc.floodFillRgba(
+        rgba,
         imgPt.dx.round(),
         imgPt.dy.round(),
         tolerance: widget.wandTolerance,
@@ -1058,6 +1168,164 @@ class _MaskEditorOverlayState extends State<_MaskEditorOverlay> {
     } finally {
       if (mounted) setState(() => _wandBusy = false);
     }
+  }
+
+  /// Ensure the cached RGBA buffer matches the current [widget.workingBytes].
+  /// Shared by the wand and the magnetic lasso — the first one to need
+  /// pixels pays for the decode, everyone else reuses the buffer.
+  ///
+  /// On web the decode goes through the browser's native PNG codec (in
+  /// `decodeRawRgba`), so even the first call is fast.
+  Future<RawRgba> _ensureRgba() async {
+    if (identical(_rgbaCacheFor, widget.workingBytes) && _rgbaCache != null) {
+      return _rgbaCache!;
+    }
+    final RawRgba r = await _svc.decodeRawRgba(widget.workingBytes);
+    _rgbaCache = r;
+    _rgbaCacheFor = widget.workingBytes;
+    return r;
+  }
+
+  // ============================================================ lasso
+
+  /// Image-pixel coordinates of the lasso polygon being assembled. Empty
+  /// when no lasso is in progress. Free-lasso fills this during a pan;
+  /// magnetic lasso appends one entry per tap (snapped to the nearest
+  /// edge). Cleared when the polygon is committed or cancelled.
+  final List<Offset> _lassoPoints = <Offset>[];
+  // Cursor in display pixels for the magnetic lasso rubber-band preview.
+  Offset? _lassoCursorDisplay;
+  // Threshold (in display pixels) for the "click near start to close" check.
+  static const double _lassoCloseThreshold = 14;
+
+  bool get _lassoInProgress => _lassoPoints.isNotEmpty;
+
+  void _startFreeLasso(DragStartDetails d) {
+    final Offset imgPt = _displayToImage(d.localPosition);
+    _lassoPoints
+      ..clear()
+      ..add(imgPt);
+    _lassoCursorDisplay = d.localPosition;
+    _repaintTick.value++;
+  }
+
+  void _updateFreeLasso(DragUpdateDetails d) {
+    final Offset imgPt = _displayToImage(d.localPosition);
+    // Throttle: only append if we've moved at least a pixel in image space —
+    // millions of redundant points would slow the painter and balloon the
+    // emitted Path with no visible benefit.
+    if (_lassoPoints.isEmpty || (_lassoPoints.last - imgPt).distance >= 1.5) {
+      _lassoPoints.add(imgPt);
+    }
+    _lassoCursorDisplay = d.localPosition;
+    _repaintTick.value++;
+  }
+
+  void _endFreeLasso() {
+    _commitLassoAsErase();
+  }
+
+  Future<void> _onMagneticLassoTap(TapDownDetails d) async {
+    // Closing tap: click near the first anchor finalises the polygon (only
+    // once there are enough points to form one — first click can't close).
+    if (_lassoPoints.length >= 3) {
+      final Offset firstDisp = _imageToDisplay(_lassoPoints.first);
+      if ((firstDisp - d.localPosition).distance <= _lassoCloseThreshold) {
+        _commitLassoAsErase();
+        return;
+      }
+    }
+    // Need pixels to snap-to-edge. The first magnetic-lasso tap on a fresh
+    // image pays for one decode; subsequent taps are instant.
+    final RawRgba rgba = await _ensureRgba();
+    final Offset rawImg = _displayToImage(d.localPosition);
+    final Offset snapped = _snapToEdge(rawImg, rgba);
+    _lassoPoints.add(snapped);
+    _lassoCursorDisplay = d.localPosition;
+    _repaintTick.value++;
+  }
+
+  void _cancelLasso() {
+    if (_lassoPoints.isEmpty) return;
+    _lassoPoints.clear();
+    _lassoCursorDisplay = null;
+    _repaintTick.value++;
+  }
+
+  void _commitLassoAsErase() {
+    if (_lassoPoints.length < 3) {
+      _cancelLasso();
+      return;
+    }
+    final Path path = Path()..moveTo(_lassoPoints[0].dx, _lassoPoints[0].dy);
+    for (int i = 1; i < _lassoPoints.length; i++) {
+      path.lineTo(_lassoPoints[i].dx, _lassoPoints[i].dy);
+    }
+    path.close();
+    widget.onAppendOp(_EraseStroke(path));
+    _lassoPoints.clear();
+    _lassoCursorDisplay = null;
+    _repaintTick.value++;
+  }
+
+  Offset _imageToDisplay(Offset image) {
+    final double sx = widget.displaySize.width / widget.image.width;
+    final double sy = widget.displaySize.height / widget.image.height;
+    return Offset(image.dx * sx, image.dy * sy);
+  }
+
+  /// Within a small square window around [center] (in image pixels), return
+  /// the pixel with the strongest Sobel edge magnitude. Cheap because the
+  /// window is tiny — one snap is ~300 pixels × 8 lookups each, negligible
+  /// even on web. Falls back to [center] if it's too close to the edge of
+  /// the image for the 3×3 Sobel kernel.
+  Offset _snapToEdge(Offset center, RawRgba rgba, {int radius = 10}) {
+    final int w = rgba.width;
+    final int h = rgba.height;
+    if (w < 3 || h < 3) return center;
+    final Uint8List p = rgba.bytes;
+    final int cx = center.dx.round().clamp(1, w - 2);
+    final int cy = center.dy.round().clamp(1, h - 2);
+    final int x0 = math.max(1, cx - radius);
+    final int y0 = math.max(1, cy - radius);
+    final int x1 = math.min(w - 2, cx + radius);
+    final int y1 = math.min(h - 2, cy + radius);
+    int bestX = cx;
+    int bestY = cy;
+    int bestMag = -1;
+    for (int y = y0; y <= y1; y++) {
+      for (int x = x0; x <= x1; x++) {
+        final int mag = _sobelMagnitude(p, w, x, y);
+        if (mag > bestMag) {
+          bestMag = mag;
+          bestX = x;
+          bestY = y;
+        }
+      }
+    }
+    return Offset(bestX.toDouble(), bestY.toDouble());
+  }
+
+  /// Sobel-3×3 gradient magnitude (|gx|+|gy|, no sqrt) of luminance at
+  /// [(x, y)]. Caller guarantees 1 ≤ x ≤ w-2 and 1 ≤ y ≤ h-2.
+  static int _sobelMagnitude(Uint8List p, int w, int x, int y) {
+    // Luminance via ITU-R BT.601 weights, kept as integer math to stay fast.
+    int lum(int xx, int yy) {
+      final int off = (yy * w + xx) * 4;
+      return (p[off] * 76 + p[off + 1] * 150 + p[off + 2] * 30) >> 8;
+    }
+
+    final int tl = lum(x - 1, y - 1);
+    final int t = lum(x, y - 1);
+    final int tr = lum(x + 1, y - 1);
+    final int l = lum(x - 1, y);
+    final int r = lum(x + 1, y);
+    final int bl = lum(x - 1, y + 1);
+    final int b = lum(x, y + 1);
+    final int br = lum(x + 1, y + 1);
+    final int gx = (tr + 2 * r + br) - (tl + 2 * l + bl);
+    final int gy = (bl + 2 * b + br) - (tl + 2 * t + tr);
+    return gx.abs() + gy.abs();
   }
 
   Future<ui.Image> _maskToUi(FloodMask m) async {
@@ -1092,17 +1360,24 @@ class _MaskEditorOverlayState extends State<_MaskEditorOverlay> {
     });
 
     return MouseRegion(
-      onHover: _isBrush
-          ? (PointerHoverEvent e) {
-              _hover = e.localPosition;
-              _repaintTick.value++;
-            }
-          : null,
+      onHover: (PointerHoverEvent e) {
+        if (_isBrush) {
+          _hover = e.localPosition;
+          _repaintTick.value++;
+        } else if (widget.tool == _MaskTool.magneticLasso && _lassoInProgress) {
+          // Move the rubber-band preview so the user can see what segment
+          // their next click would close off.
+          _lassoCursorDisplay = e.localPosition;
+          _repaintTick.value++;
+        }
+      },
       onExit: (_) {
         _hover = null;
         _repaintTick.value++;
       },
-      cursor: _isBrush ? SystemMouseCursors.precise : SystemMouseCursors.click,
+      cursor: _isBrush || _isLasso
+          ? SystemMouseCursors.precise
+          : SystemMouseCursors.click,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onPanStart: _onPanStart,
@@ -1126,15 +1401,45 @@ class _MaskEditorOverlayState extends State<_MaskEditorOverlay> {
                   brushAccent: widget.tool == _MaskTool.brushRestore
                       ? Theme.of(context).colorScheme.tertiary
                       : Theme.of(context).colorScheme.primary,
+                  lassoPointsImage: _lassoPoints,
+                  lassoCursorDisplay: _lassoCursorDisplay,
+                  lassoRubberBand: widget.tool == _MaskTool.magneticLasso,
+                  lassoCloseThreshold: _lassoCloseThreshold,
                   repaint: _repaintTick,
                 ),
               ),
             ),
             if (_wandBusy) const Center(child: CircularProgressIndicator()),
+            // In-progress lasso banner: point count + commit / cancel.
+            // Lives inside the overlay so it can read the local lasso state
+            // without lifting it up to the parent screen.
+            if (_lassoInProgress)
+              Positioned(
+                top: 8,
+                right: 8,
+                child: _LassoBanner(
+                  pointCount: _lassoPoints.length,
+                  canClose: _lassoPoints.length >= 3,
+                  showClose: widget.tool == _MaskTool.magneticLasso,
+                  onCancel: () => setState(_cancelLasso),
+                  onClose: () => setState(_commitLassoAsErase),
+                ),
+              ),
           ],
         ),
       ),
     );
+  }
+
+  @override
+  void didUpdateWidget(_MaskEditorOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Switching away from a lasso tool (or to a different tool entirely)
+    // should discard any in-progress polygon — keeping it around would be
+    // confusing and the gesture handlers wouldn't pick it up anyway.
+    if (oldWidget.tool != widget.tool && _lassoInProgress) {
+      _cancelLasso();
+    }
   }
 }
 
@@ -1146,6 +1451,10 @@ class _MaskCompositePainter extends CustomPainter {
     required this.hover,
     required this.brushRadiusPx,
     required this.brushAccent,
+    required this.lassoPointsImage,
+    required this.lassoCursorDisplay,
+    required this.lassoRubberBand,
+    required this.lassoCloseThreshold,
     required Listenable repaint,
   }) : super(repaint: repaint);
 
@@ -1155,6 +1464,19 @@ class _MaskCompositePainter extends CustomPainter {
   final Offset? hover;
   final double brushRadiusPx;
   final Color brushAccent;
+  // In-progress lasso polygon, in image-pixel coords. Empty when no lasso
+  // is being drawn.
+  final List<Offset> lassoPointsImage;
+  // Cursor position in display pixels — used to draw the magnetic-lasso
+  // rubber-band segment from the last anchor.
+  final Offset? lassoCursorDisplay;
+  // Whether to draw the rubber-band preview + start-anchor disc. True for
+  // magnetic lasso (which is committed by clicks), false for free lasso
+  // (committed on pan end).
+  final bool lassoRubberBand;
+  // Display-pixel radius of the "click here to close" target around the
+  // starting anchor.
+  final double lassoCloseThreshold;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1227,6 +1549,53 @@ class _MaskCompositePainter extends CustomPainter {
       canvas.drawCircle(hover!, brushRadiusPx, outer);
       canvas.drawCircle(hover!, brushRadiusPx - 1, inner);
     }
+
+    // In-progress lasso polygon — drawn on top of the composite. Always in
+    // display-pixel coords (we map each image-pixel anchor through sx/sy).
+    if (lassoPointsImage.isNotEmpty) {
+      final Path poly = Path()
+        ..moveTo(lassoPointsImage[0].dx * sx, lassoPointsImage[0].dy * sy);
+      for (int i = 1; i < lassoPointsImage.length; i++) {
+        poly.lineTo(lassoPointsImage[i].dx * sx, lassoPointsImage[i].dy * sy);
+      }
+      final Paint stroke = Paint()
+        ..color = brushAccent
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.6;
+      canvas.drawPath(poly, stroke);
+
+      // Magnetic-lasso live preview: the rubber-band segment from the last
+      // anchor to the current cursor, plus a hit target around the start
+      // anchor so the user can see where to click to close.
+      if (lassoRubberBand && lassoCursorDisplay != null) {
+        final Offset lastDisp = Offset(
+          lassoPointsImage.last.dx * sx,
+          lassoPointsImage.last.dy * sy,
+        );
+        final Paint band = Paint()
+          ..color = brushAccent.withValues(alpha: 0.55)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2;
+        canvas.drawLine(lastDisp, lassoCursorDisplay!, band);
+      }
+      if (lassoRubberBand) {
+        final Offset firstDisp = Offset(
+          lassoPointsImage.first.dx * sx,
+          lassoPointsImage.first.dy * sy,
+        );
+        // Hollow ring marking the close target, then a small filled dot for
+        // the anchor itself.
+        canvas.drawCircle(
+          firstDisp,
+          lassoCloseThreshold,
+          Paint()
+            ..color = brushAccent.withValues(alpha: 0.4)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.2,
+        );
+        canvas.drawCircle(firstDisp, 3.5, Paint()..color = brushAccent);
+      }
+    }
   }
 
   void _paintCheckerboard(Canvas canvas, Rect rect) {
@@ -1253,6 +1622,67 @@ class _MaskCompositePainter extends CustomPainter {
         !listEquals(old.ops, ops) ||
         old.hover != hover ||
         old.brushRadiusPx != brushRadiusPx ||
-        old.brushAccent != brushAccent;
+        old.brushAccent != brushAccent ||
+        !identical(old.lassoPointsImage, lassoPointsImage) ||
+        old.lassoPointsImage.length != lassoPointsImage.length ||
+        old.lassoCursorDisplay != lassoCursorDisplay ||
+        old.lassoRubberBand != lassoRubberBand ||
+        old.lassoCloseThreshold != lassoCloseThreshold;
+  }
+}
+
+/// Floating panel shown over the mask canvas while a lasso polygon is being
+/// drawn. Surfaces the point count, a Cancel button (always), and a Close
+/// button (magnetic lasso only — free lasso auto-closes on pan end).
+class _LassoBanner extends StatelessWidget {
+  const _LassoBanner({
+    required this.pointCount,
+    required this.canClose,
+    required this.showClose,
+    required this.onCancel,
+    required this.onClose,
+  });
+
+  final int pointCount;
+  final bool canClose;
+  final bool showClose;
+  final VoidCallback onCancel;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Material(
+      borderRadius: BorderRadius.circular(8),
+      elevation: 3,
+      color: theme.colorScheme.surfaceContainerHigh,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(
+              '$pointCount point${pointCount == 1 ? '' : 's'}',
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(width: 8),
+            if (showClose)
+              TextButton.icon(
+                onPressed: canClose ? onClose : null,
+                icon: const Icon(Icons.check, size: 18),
+                label: const Text('Close'),
+              ),
+            TextButton.icon(
+              onPressed: onCancel,
+              icon: const Icon(Icons.close, size: 18),
+              label: const Text('Cancel'),
+              style: TextButton.styleFrom(
+                foregroundColor: theme.colorScheme.error,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

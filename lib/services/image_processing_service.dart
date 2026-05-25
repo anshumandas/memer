@@ -4,7 +4,26 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/painting.dart';
-import 'package:image/image.dart' as img;
+
+// Platform split for the slow paths (crop, rotate, PNG encode).
+//
+// Native: drive `ui.Canvas` and use the engine's PNG encoder — work runs on
+// engine threads, doesn't block the Dart isolate.
+//
+// Web: drive an `HTMLCanvasElement` and use `canvas.toBlob`. CanvasKit's
+// `picture.toImage` and `image.toByteData(png)` *look* async but run
+// synchronously inside the Skia-WASM module on the JS main thread, which
+// freezes the browser for any sizable image. `toBlob` runs on a browser
+// worker, so the UI thread stays responsive.
+import 'image_processor_default.dart'
+    if (dart.library.html) 'image_processor_web.dart'
+    as processor;
+
+// Re-export the platform-agnostic types from the processor so callers can
+// hold a [RawRgba] without importing the platform-split file themselves.
+// `RawRgba` is a record typedef so the structural shape is identical across
+// both impls — re-exporting is just a naming convenience.
+export 'image_processor_default.dart' show RawRgba;
 
 /// One contiguous region selected by the magic-wand tool, expressed as a
 /// single-channel mask. Width/height match the *source image's* pixel
@@ -52,55 +71,52 @@ class ImageProcessingService {
   }
 
   /// Crop [bytes] by a fractional source rect (each component 0..1). Returns
-  /// a fresh PNG. The output's RGB channels are copied verbatim; any alpha
-  /// already present is preserved.
-  Future<Uint8List> cropPng(Uint8List bytes, Rect srcFractional) async {
-    final img.Image? src = img.decodeImage(bytes);
-    if (src == null) return bytes;
-    final int x = (srcFractional.left * src.width).round().clamp(0, src.width);
-    final int y = (srcFractional.top * src.height).round().clamp(0, src.height);
-    final int w = (srcFractional.width * src.width).round().clamp(
-      1,
-      src.width - x,
-    );
-    final int h = (srcFractional.height * src.height).round().clamp(
-      1,
-      src.height - y,
-    );
-    final img.Image cropped = img.copyCrop(
-      src,
-      x: x,
-      y: y,
-      width: w,
-      height: h,
-    );
-    return Uint8List.fromList(img.encodePng(cropped));
+  /// a fresh PNG. Delegates to the platform-specific processor (see the
+  /// `processor` import at the top of this file).
+  Future<Uint8List> cropPng(Uint8List bytes, Rect srcFractional) {
+    return processor.cropPng(bytes, srcFractional);
   }
 
   /// Rotate [bytes] by [quarters] × 90° clockwise.
-  Future<Uint8List> rotateQuarterPng(Uint8List bytes, int quarters) async {
-    if (quarters % 4 == 0) return bytes;
-    final img.Image? src = img.decodeImage(bytes);
-    if (src == null) return bytes;
-    final int angle = (quarters % 4) * 90;
-    final img.Image rotated = img.copyRotate(src, angle: angle);
-    return Uint8List.fromList(img.encodePng(rotated));
+  Future<Uint8List> rotateQuarterPng(Uint8List bytes, int quarters) {
+    final int q = quarters % 4;
+    if (q == 0) return Future<Uint8List>.value(bytes);
+    return processor.rotateAnyPng(bytes, q * 90.0);
   }
 
   /// Rotate [bytes] by an arbitrary [degrees] (clockwise positive). The output
   /// PNG's canvas grows so the rotated source fits without clipping; the new
-  /// corners are transparent. Uses cubic interpolation for smoother edges.
-  Future<Uint8List> rotateAnyPng(Uint8List bytes, double degrees) async {
+  /// corners are transparent.
+  Future<Uint8List> rotateAnyPng(Uint8List bytes, double degrees) {
     final double normalized = degrees % 360;
-    if (normalized.abs() < 0.01) return bytes;
-    final img.Image? src = img.decodeImage(bytes);
-    if (src == null) return bytes;
-    final img.Image rotated = img.copyRotate(
-      src,
-      angle: normalized,
-      interpolation: img.Interpolation.cubic,
-    );
-    return Uint8List.fromList(img.encodePng(rotated));
+    if (normalized.abs() < 0.01) return Future<Uint8List>.value(bytes);
+    return processor.rotateAnyPng(bytes, normalized);
+  }
+
+  /// Decode [bytes] into raw RGBA pixels — the format the flood fill reads.
+  /// Hot callers (the wand) should call this once and reuse the result via
+  /// [floodFillRgba] instead of re-decoding on every tap.
+  Future<processor.RawRgba> decodeRawRgba(Uint8List bytes) =>
+      processor.decodeRawRgba(bytes);
+
+  /// Flood-fill over already-decoded RGBA pixels. The expensive PNG decode
+  /// is the caller's job — this lets the wand reuse one decode across many
+  /// taps. See [floodFill] for tolerance semantics.
+  Future<FloodMask> floodFillRgba(
+    processor.RawRgba rgba,
+    int seedX,
+    int seedY, {
+    int tolerance = 60,
+  }) async {
+    final Uint8List mask = await compute(_floodFillRgbaIsolate, (
+      rgba.bytes,
+      rgba.width,
+      rgba.height,
+      seedX,
+      seedY,
+      tolerance,
+    ));
+    return FloodMask(bytes: mask, width: rgba.width, height: rgba.height);
   }
 
   /// Flood-fill from [seed] using a colour-similarity tolerance.
@@ -113,21 +129,17 @@ class ImageProcessingService {
   /// (not the on-screen canvas) — paint/erase ops in the editor convert
   /// pointer positions into image pixels before invoking this.
   ///
-  /// Runs in a background isolate via [compute] so a multi-megapixel fill
-  /// never blocks the UI thread.
+  /// Convenience wrapper that decodes [bytes] each call. Hot paths (every
+  /// wand tap on the same image) should instead call [decodeRawRgba] once
+  /// and reuse via [floodFillRgba].
   Future<FloodMask> floodFill(
     Uint8List bytes,
     int seedX,
     int seedY, {
     int tolerance = 60,
   }) async {
-    final (Uint8List mask, int w, int h) = await compute(_floodFillIsolate, (
-      bytes,
-      seedX,
-      seedY,
-      tolerance,
-    ));
-    return FloodMask(bytes: mask, width: w, height: h);
+    final processor.RawRgba rgba = await decodeRawRgba(bytes);
+    return floodFillRgba(rgba, seedX, seedY, tolerance: tolerance);
   }
 
   /// Bake erasures (and any restore strokes) into the source image and
@@ -202,14 +214,13 @@ class ImageProcessingService {
     picture.dispose();
     source.dispose();
 
-    final ByteData? png = await rendered.toByteData(
-      format: ui.ImageByteFormat.png,
-    );
-    rendered.dispose();
-    if (png == null) {
-      throw StateError('Could not encode the edited image as PNG.');
+    try {
+      // Hand the PNG encode to the platform processor — on web that routes
+      // through HTMLCanvasElement.toBlob so the JS main thread stays free.
+      return await processor.encodeUiImageAsPng(rendered);
+    } finally {
+      rendered.dispose();
     }
-    return png.buffer.asUint8List();
   }
 
   /// Build a [ui.Image] whose alpha channel equals the flood-mask bytes
@@ -231,32 +242,25 @@ class ImageProcessingService {
   }
 }
 
-/// Entry point for [ImageProcessingService.floodFill]'s background isolate.
+/// Entry point for [ImageProcessingService.floodFillRgba]'s background
+/// isolate. Operates on already-decoded RGBA8 pixels — the caller (typically
+/// the wand cache) is responsible for the PNG decode.
 ///
-/// Decodes the PNG, normalises to RGBA8 so we can read pixels via raw byte
-/// indexing (the `image` package's `getPixel` is an order of magnitude slower
-/// — it allocates a `Pixel` wrapper per call, which is what used to hang the
-/// UI on big regions). Returns `(mask, width, height)` so the result can
-/// cross the isolate boundary without depending on the [FloodMask] class.
-(Uint8List, int, int) _floodFillIsolate((Uint8List, int, int, int) args) {
-  final Uint8List bytes = args.$1;
-  final int seedX = args.$2;
-  final int seedY = args.$3;
-  final int tolerance = args.$4;
+/// Args: `(rgba, width, height, seedX, seedY, tolerance)`. Returns just the
+/// mask bytes (caller already knows the dimensions).
+Uint8List _floodFillRgbaIsolate((Uint8List, int, int, int, int, int) args) {
+  final Uint8List pixels = args.$1;
+  final int w = args.$2;
+  final int h = args.$3;
+  final int seedX = args.$4;
+  final int seedY = args.$5;
+  final int tolerance = args.$6;
 
-  final img.Image? decoded = img.decodeImage(bytes);
-  if (decoded == null) return (Uint8List(0), 0, 0);
-
-  final img.Image src =
-      (decoded.numChannels == 4 && decoded.format == img.Format.uint8)
-      ? decoded
-      : decoded.convert(numChannels: 4, format: img.Format.uint8);
-  final int w = src.width;
-  final int h = src.height;
-  final Uint8List pixels = src.getBytes(); // flat RGBA, length = w*h*4
-
+  if (w == 0 || h == 0 || pixels.length < w * h * 4) {
+    return Uint8List(w * h);
+  }
   if (seedX < 0 || seedY < 0 || seedX >= w || seedY >= h) {
-    return (Uint8List(w * h), w, h);
+    return Uint8List(w * h);
   }
 
   final int seedOff = (seedY * w + seedX) * 4;
@@ -295,5 +299,5 @@ class ImageProcessingService {
       }
     }
   }
-  return (mask, w, h);
+  return mask;
 }

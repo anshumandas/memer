@@ -30,6 +30,13 @@ class TemplateService {
     'assets/templates/speech_bubble.json',
     'assets/templates/wojak_yelling.json',
     'assets/templates/quote_card.json',
+    'assets/templates/birthday.json',
+    'assets/templates/anniversary.json',
+    'assets/templates/thank_you.json',
+    'assets/templates/congratulations.json',
+    'assets/templates/get_well_soon.json',
+    'assets/templates/seasons_greetings.json',
+    'assets/templates/wedding_invite.json',
   ];
 
   Future<List<MemeTemplate>>? _loadFuture;
