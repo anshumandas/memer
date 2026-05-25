@@ -7,7 +7,10 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
+import '../services/ai/ai_settings.dart';
+import '../services/ai/huggingface_ai_service.dart';
 import '../services/image_processing_service.dart';
+import '../widgets/ai_onboarding_sheet.dart';
 
 /// Full-screen modal editor that operates on a single layer's image bytes.
 ///
@@ -62,10 +65,23 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
   int _wandTolerance = 60;
   _MaskTool _maskTool = _MaskTool.brushErase;
 
+  // ---- ai tool state ---------------------------------------------------
+  // Single shared AiSettings instance — lets the editor read the token /
+  // consent once on open instead of every tap. The onboarding sheet
+  // mutates the same instance so [_runAi] sees fresh state after consent.
+  final AiSettings _aiSettings = AiSettings();
+  _AiMode _aiMode = _AiMode.backgroundRemove;
+  // Brush strokes (in image-pixel coords) used to build the inpainting
+  // mask for the "Erase object" sub-mode. Each path is a chain of brush
+  // circles drawn at [_aiBrushSize] radius.
+  final List<Path> _aiMaskStrokes = <Path>[];
+  final List<Path> _aiMaskRedo = <Path>[];
+  double _aiBrushSize = 32;
+
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 3, vsync: this);
+    _tabs = TabController(length: 4, vsync: this);
     _working = widget.initialBytes;
     _decodeWorking();
   }
@@ -237,10 +253,12 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
         ],
         bottom: TabBar(
           controller: _tabs,
+          isScrollable: true,
           tabs: const <Tab>[
             Tab(icon: Icon(Icons.crop), text: 'Crop'),
             Tab(icon: Icon(Icons.rotate_right), text: 'Rotate'),
             Tab(icon: Icon(Icons.brush_outlined), text: 'Background'),
+            Tab(icon: Icon(Icons.auto_awesome), text: 'AI'),
           ],
         ),
       ),
@@ -257,6 +275,7 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
                           _buildCropTab(),
                           _buildRotateTab(),
                           _buildMaskTab(),
+                          _buildAiTab(),
                         ],
                       ),
                     ),
@@ -607,6 +626,225 @@ class _ImageEditorScreenState extends State<ImageEditorScreen>
         ),
       ),
     );
+  }
+
+  // ============================================================== ai tab
+
+  Widget _buildAiTab() {
+    final ui.Image image = _workingImage!;
+    final ThemeData theme = Theme.of(context);
+    final bool isErase = _aiMode == _AiMode.objectErase;
+    return Column(
+      children: <Widget>[
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Center(
+              child: _AspectFitImage(
+                image: image,
+                child: (Size displaySize) => isErase
+                    ? _AiBrushOverlay(
+                        image: image,
+                        displaySize: displaySize,
+                        strokes: _aiMaskStrokes,
+                        brushSize: _aiBrushSize,
+                        onAppendStroke: _appendAiStroke,
+                        onExtendStroke: _extendAiStroke,
+                      )
+                    : const SizedBox.shrink(),
+              ),
+            ),
+          ),
+        ),
+        Material(
+          color: theme.colorScheme.surfaceContainerHighest,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: <Widget>[
+                  SegmentedButton<_AiMode>(
+                    showSelectedIcon: false,
+                    segments: const <ButtonSegment<_AiMode>>[
+                      ButtonSegment<_AiMode>(
+                        value: _AiMode.backgroundRemove,
+                        icon: Icon(Icons.layers_clear),
+                        label: Text('Remove background'),
+                      ),
+                      ButtonSegment<_AiMode>(
+                        value: _AiMode.objectErase,
+                        icon: Icon(Icons.auto_fix_high),
+                        label: Text('Erase object'),
+                      ),
+                    ],
+                    selected: <_AiMode>{_aiMode},
+                    onSelectionChanged: (Set<_AiMode> s) =>
+                        setState(() => _aiMode = s.first),
+                  ),
+                  if (isErase) ...<Widget>[
+                    const SizedBox(width: 16),
+                    const Text('Brush'),
+                    SizedBox(
+                      width: 160,
+                      child: Slider(
+                        min: 8,
+                        max: 200,
+                        value: _aiBrushSize,
+                        onChanged: (double v) =>
+                            setState(() => _aiBrushSize = v),
+                      ),
+                    ),
+                    Text('${_aiBrushSize.round()}px'),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+        _bottomBar(
+          children: <Widget>[
+            if (isErase) ...<Widget>[
+              IconButton.outlined(
+                tooltip: 'Undo stroke',
+                onPressed: _busy || _aiMaskStrokes.isEmpty
+                    ? null
+                    : _undoAiStroke,
+                icon: const Icon(Icons.undo),
+              ),
+              const SizedBox(width: 8),
+              IconButton.outlined(
+                tooltip: 'Redo stroke',
+                onPressed: _busy || _aiMaskRedo.isEmpty ? null : _redoAiStroke,
+                icon: const Icon(Icons.redo),
+              ),
+              const SizedBox(width: 12),
+            ],
+            Expanded(
+              child: Text(
+                isErase
+                    ? 'Paint over the object you want gone, then tap Run.'
+                    : 'Send this image to a cloud model to remove its '
+                          'background. Result will replace the working image.',
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+            FilledButton.icon(
+              onPressed: _busy || (isErase && _aiMaskStrokes.isEmpty)
+                  ? null
+                  : _runAi,
+              icon: const Icon(Icons.cloud_upload),
+              label: const Text('Run'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  void _appendAiStroke(Path p) {
+    setState(() {
+      _aiMaskStrokes.add(p);
+      _aiMaskRedo.clear();
+    });
+  }
+
+  // Brush continuation lives outside setState — _aiMaskStrokes references
+  // the same Path the overlay is appending to, so the painter sees the
+  // new circles on the next paint pass without us cloning the list.
+  void _extendAiStroke() => setState(() {});
+
+  void _undoAiStroke() {
+    if (_aiMaskStrokes.isEmpty) return;
+    setState(() => _aiMaskRedo.add(_aiMaskStrokes.removeLast()));
+  }
+
+  void _redoAiStroke() {
+    if (_aiMaskRedo.isEmpty) return;
+    setState(() => _aiMaskStrokes.add(_aiMaskRedo.removeLast()));
+  }
+
+  /// Common entry point for both AI ops: ensures the user has consented +
+  /// supplied a token (running the onboarding sheet if not), instantiates
+  /// the service with their settings, and dispatches to the right op via
+  /// [_runBusy] so the existing "Processing…" overlay shows.
+  Future<void> _runAi() async {
+    if (!await _aiSettings.isReady) {
+      if (!mounted) return;
+      final bool ok = await AiOnboardingSheet.show(context, _aiSettings);
+      if (!ok || !mounted) return;
+    }
+    final String? token = await _aiSettings.readToken();
+    if (token == null || token.isEmpty) return;
+    final String bgModel = await _aiSettings.bgModel();
+    final String inpaintModel = await _aiSettings.inpaintModel();
+    final HuggingFaceAiService svc = HuggingFaceAiService(
+      token: token,
+      bgModel: bgModel,
+      inpaintModel: inpaintModel,
+    );
+    try {
+      if (_aiMode == _AiMode.backgroundRemove) {
+        await _runBusy(
+          'Background removal failed',
+          () => svc.removeBackground(_working),
+        );
+      } else {
+        await _runAiEraseObject(svc);
+      }
+    } finally {
+      svc.dispose();
+    }
+  }
+
+  Future<void> _runAiEraseObject(HuggingFaceAiService svc) async {
+    final ui.Image image = _workingImage!;
+    final Uint8List mask = await _bakeMaskPng(
+      image.width,
+      image.height,
+      _aiMaskStrokes,
+    );
+    await _runBusy('Object erase failed', () async {
+      final Uint8List result = await svc.eraseObject(_working, mask);
+      return result;
+    });
+    if (mounted) setState(() => _aiMaskStrokes.clear());
+  }
+
+  /// Rasterises [paths] (in image-pixel coords) as a white-on-black PNG of
+  /// `[w] × [h]` — the mask format Stable Diffusion inpainting expects.
+  /// Done off the main isolate by virtue of `picture.toImage` running on
+  /// the engine's raster thread on native; on web it stays synchronous in
+  /// CanvasKit but the masks are small (single channel, source res) so it
+  /// completes in well under a frame.
+  Future<Uint8List> _bakeMaskPng(int w, int h, List<Path> paths) async {
+    final ui.PictureRecorder recorder = ui.PictureRecorder();
+    final Canvas canvas = Canvas(
+      recorder,
+      Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+    );
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+      Paint()..color = Colors.black,
+    );
+    final Paint white = Paint()..color = Colors.white;
+    for (final Path p in paths) {
+      canvas.drawPath(p, white);
+    }
+    final ui.Picture picture = recorder.endRecording();
+    final ui.Image rendered = await picture.toImage(w, h);
+    picture.dispose();
+    try {
+      final ByteData? data = await rendered.toByteData(
+        format: ui.ImageByteFormat.png,
+      );
+      if (data == null) {
+        throw StateError('Could not encode mask PNG');
+      }
+      return data.buffer.asUint8List();
+    } finally {
+      rendered.dispose();
+    }
   }
 
   // ------------------------------------------------------------ bottom bar
@@ -1685,4 +1923,166 @@ class _LassoBanner extends StatelessWidget {
       ),
     );
   }
+}
+
+// ============================================================ ai tab support
+
+/// Which AI op the user is set up to run. Background-removal is one-shot
+/// (no painting); object-erase needs a brush mask first.
+enum _AiMode { backgroundRemove, objectErase }
+
+/// Overlay painted on top of the image in the AI tab's "Erase object"
+/// sub-mode. Behaves like the existing mask-tab brush — each pan appends
+/// a new path of brush circles in image-pixel coords; the parent owns the
+/// stroke list so undo/redo can mutate it.
+class _AiBrushOverlay extends StatefulWidget {
+  const _AiBrushOverlay({
+    required this.image,
+    required this.displaySize,
+    required this.strokes,
+    required this.brushSize,
+    required this.onAppendStroke,
+    required this.onExtendStroke,
+  });
+
+  final ui.Image image;
+  final Size displaySize;
+  final List<Path> strokes;
+  final double brushSize;
+  final ValueChanged<Path> onAppendStroke;
+  // Pinged on every brush extension so the parent can rebuild and the
+  // painter re-runs. We deliberately do NOT clone the path on each tick —
+  // the path object is shared between parent state and overlay state, so a
+  // rebuild is all that's needed to see new circles.
+  final VoidCallback onExtendStroke;
+
+  @override
+  State<_AiBrushOverlay> createState() => _AiBrushOverlayState();
+}
+
+class _AiBrushOverlayState extends State<_AiBrushOverlay> {
+  Path? _current;
+  Offset? _hover;
+  final ValueNotifier<int> _repaintTick = ValueNotifier<int>(0);
+
+  @override
+  void dispose() {
+    _repaintTick.dispose();
+    super.dispose();
+  }
+
+  Offset _displayToImage(Offset display) {
+    final double sx = widget.image.width / widget.displaySize.width;
+    final double sy = widget.image.height / widget.displaySize.height;
+    return Offset(display.dx * sx, display.dy * sy);
+  }
+
+  void _onPanStart(DragStartDetails d) {
+    final Offset imgPt = _displayToImage(d.localPosition);
+    final Path p = Path()
+      ..addOval(Rect.fromCircle(center: imgPt, radius: widget.brushSize));
+    _current = p;
+    widget.onAppendStroke(p);
+    _hover = d.localPosition;
+    _repaintTick.value++;
+  }
+
+  void _onPanUpdate(DragUpdateDetails d) {
+    if (_current == null) return;
+    final Offset imgPt = _displayToImage(d.localPosition);
+    _current!.addOval(Rect.fromCircle(center: imgPt, radius: widget.brushSize));
+    _hover = d.localPosition;
+    widget.onExtendStroke();
+    _repaintTick.value++;
+  }
+
+  void _onPanEnd(DragEndDetails d) {
+    _current = null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onHover: (PointerHoverEvent e) {
+        _hover = e.localPosition;
+        _repaintTick.value++;
+      },
+      onExit: (_) {
+        _hover = null;
+        _repaintTick.value++;
+      },
+      cursor: SystemMouseCursors.precise,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onPanStart: _onPanStart,
+        onPanUpdate: _onPanUpdate,
+        onPanEnd: _onPanEnd,
+        child: CustomPaint(
+          painter: _AiBrushPainter(
+            image: widget.image,
+            strokes: widget.strokes,
+            hover: _hover,
+            brushRadiusPx:
+                widget.brushSize *
+                (widget.displaySize.width / widget.image.width),
+            accent: Theme.of(context).colorScheme.primary,
+            repaint: _repaintTick,
+          ),
+          size: widget.displaySize,
+        ),
+      ),
+    );
+  }
+}
+
+class _AiBrushPainter extends CustomPainter {
+  _AiBrushPainter({
+    required this.image,
+    required this.strokes,
+    required this.hover,
+    required this.brushRadiusPx,
+    required this.accent,
+    required Listenable repaint,
+  }) : super(repaint: repaint);
+
+  final ui.Image image;
+  final List<Path> strokes;
+  final Offset? hover;
+  final double brushRadiusPx;
+  final Color accent;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double sx = size.width / image.width;
+    final double sy = size.height / image.height;
+    // Translucent fill over masked area so the user sees what they painted.
+    final Paint fill = Paint()..color = accent.withValues(alpha: 0.45);
+    canvas.save();
+    canvas.scale(sx, sy);
+    for (final Path p in strokes) {
+      canvas.drawPath(p, fill);
+    }
+    canvas.restore();
+    // Brush ring follows the cursor.
+    if (hover != null && brushRadiusPx > 0) {
+      final Paint outer = Paint()
+        ..color = accent.withValues(alpha: 0.85)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5;
+      final Paint inner = Paint()
+        ..color = Colors.white.withValues(alpha: 0.9)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.8;
+      canvas.drawCircle(hover!, brushRadiusPx, outer);
+      canvas.drawCircle(hover!, brushRadiusPx - 1, inner);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_AiBrushPainter old) =>
+      !identical(old.image, image) ||
+      old.hover != hover ||
+      old.brushRadiusPx != brushRadiusPx ||
+      old.accent != accent ||
+      old.strokes.length != strokes.length;
 }

@@ -42,6 +42,16 @@ dependencies:
   # conditional import for the browser PNG-download saver.
   web: ^1.1.0
 
+  # HTTP client for the optional GenAI background/object-removal feature
+  # (BYO Hugging Face token; nothing is sent unless the user opts in).
+  http: ^1.2.0
+
+  # Secure key/value store for the user-supplied Hugging Face token. Uses
+  # Keychain (iOS/macOS), Keystore (Android), DPAPI (Windows), libsecret
+  # (Linux), SubtleCrypto-backed IndexedDB (web). Aligns with the Phase-3
+  # BYO-credentials approach — we never ship our own keys.
+  flutter_secure_storage: ^9.2.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

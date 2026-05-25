@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'ai_settings_screen.dart';
 import 'editor_screen.dart';
 import 'template_gallery_screen.dart';
 
@@ -13,6 +14,24 @@ class HomeScreen extends StatelessWidget {
     final TextTheme text = Theme.of(context).textTheme;
 
     return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        actions: <Widget>[
+          IconButton(
+            tooltip: 'AI image tools',
+            icon: const Icon(Icons.auto_awesome),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const AiSettingsScreen(),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+      extendBodyBehindAppBar: true,
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 520),
