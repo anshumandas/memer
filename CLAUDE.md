@@ -1,99 +1,107 @@
 # memer
 
-Client-only Flutter meme maker. **No backend, no secrets** (Phase 1).
-Layer-based editor: a meme is a z-ordered list of `Layer`s — background,
-text, hyperlinks, images and callout bubbles — composited inside a
-`RepaintBoundary` and shared as PNG via the OS share sheet (`share_plus`).
-Targets Android, iOS, web, Windows, macOS, Linux.
+Client-only Flutter meme maker. **No backend, no embedded secrets.**
+A meme is a z-ordered list of `Layer`s composited in a `RepaintBoundary`
+and exported/shared as PNG. Targets Android, iOS, web, Windows, macOS, Linux.
 
 ## Commands
 
 - Run: `flutter run` (`-d chrome` | `-d windows` | `-d macos` | `-d linux`)
-- Test: `flutter test`
-- Analyze: `flutter analyze`
-- Format: `dart format .`
+- Test: `flutter test`  /  Analyze: `flutter analyze`  /  Format: `dart format .`
 - First-time / new platforms: `flutter create .` then `flutter pub get`
 
 ## Architecture
 
-State = one `MemeController` (`ChangeNotifier`) wrapping an immutable
-`MemeConfig`. UI rebuilds via `ListenableBuilder`. No other state-mgmt dep.
+State = one `MemeController` (`ChangeNotifier`) wrapping immutable
+`MemeConfig { CanvasAspect, List<Layer> }`. UI rebuilds via `ListenableBuilder`.
+No other state-mgmt dep.
 
-A meme is `MemeConfig { CanvasAspect aspect, List<Layer> layers }`. Layer is
-a sealed family with five variants:
+`Layer` is sealed — 5 variants:
 
-| Layer            | What it stores                                                       |
-| ---------------- | -------------------------------------------------------------------- |
-| `BackgroundLayer` | solid colour (always pinned at index 0; non-deletable)              |
-| `TextLayer`       | text, font, size, colour, bold, italic, align, optional outline     |
-| `HyperlinkLayer`  | URL + display label + same text styling (underlined; copy-link UI)  |
-| `ImageLayer`      | `bytes` + `originalBytes` (re-edit source — wiring lands in Phase 2)|
-| `CalloutLayer`    | shape (`CalloutKind`), text, fill/border/text colours, tail target  |
+| Layer             | Stores                                                              |
+| ----------------- | ------------------------------------------------------------------- |
+| `BackgroundLayer` | solid colour; pinned at index 0; non-deletable                      |
+| `TextLayer`       | text, font, size, colour, bold/italic, align, optional outline      |
+| `HyperlinkLayer`  | URL + label + text styling (URL appended to share caption)          |
+| `ImageLayer`      | `bytes` + `originalBytes` (re-edit source)                          |
+| `CalloutLayer`    | `CalloutKind` shape, text, fill/border/text colours, tail target    |
 
-- `models/layer.dart` — sealed `Layer` hierarchy + `CalloutKind` + clamps.
-- `models/meme_config.dart` — `MemeConfig` + `CanvasAspect` enum.
-- `models/meme_controller.dart` — layer add/remove/reorder/update + selection.
-- `widgets/meme_canvas.dart` — iterates `config.layers`, positions each in
-  fractional space, rotates/opacities them. Wrapped in `RepaintBoundary` and
+### Key files
+
+- `models/layer.dart`, `meme_config.dart`, `meme_controller.dart` — model + state.
+- `models/meme_template.dart` — JSON-backed `MemeTemplate` + `LayerTemplate`
+  family. Templates declare text/image **slots** the wizard fills in (no
+  embedded binary image data).
+- `widgets/meme_canvas.dart` — composites layers; wrapped in `RepaintBoundary`,
   reused as the export source (preview == output).
+- `widgets/selection_overlay.dart` — drag/resize/rotate/tail-target handles,
+  rendered **outside** the boundary so they're never in the PNG.
+- `widgets/layers_panel.dart`, `widgets/inspector_panel.dart` — z-order list +
+  per-layer sub-inspectors.
 - `widgets/layer_renderers/` — one renderer per layer kind.
-- `widgets/selection_overlay.dart` — `LayerSelectionOverlay`: tap-to-select,
-  drag-to-move, corner-resize, rotate handle, callout tail-target drag. Lives
-  *outside* the `RepaintBoundary` so handles never appear in the exported PNG.
-- `widgets/layers_panel.dart` — reorderable z-order list, add-layer menu,
-  per-row visibility/lock/delete.
-- `widgets/inspector_panel.dart` — sub-inspectors per layer kind.
-- `services/image_export_service.dart` — `RepaintBoundary`→PNG; conditional
-  import (`platform_saver_default.dart` / `platform_saver_web.dart`).
-- `services/image_processing_service.dart` — pure-Dart crop, 90° rotate,
-  flood-fill (magic wand) and bake-erasures into a transparent PNG. Built
-  on the `image` package; runs on every platform.
-- `services/social/` — `SocialPoster` interface; `ShareSheetPoster` (default,
-  no backend); `DirectApiPoster` stub (real impls land in Phase 3).
-- `screens/` — `editor_screen.dart` (3-pane: layers | canvas | inspector),
-  `image_editor_screen.dart` (Phase-2 modal: crop / rotate / background-mask),
-  `home_screen.dart` (landing).
+- `screens/home_screen.dart` — landing (Create / Templates / AI settings).
+- `screens/editor_screen.dart` — 3-pane editor.
+- `screens/template_gallery_screen.dart` + `template_wizard_screen.dart` —
+  pick a template, fill slots with a live preview, hand off to editor.
+- `screens/image_editor_screen.dart` — modal: crop, 90° rotate, manual
+  background-removal painter (brush + magic-wand) + an **AI tab**
+  (BYO Hugging Face token: bg-removal + inpainting object-erase).
+- `screens/ai_settings_screen.dart` + `widgets/ai_onboarding_sheet.dart` —
+  consent + token entry; model overrides.
+- `services/image_export_service.dart` — `RepaintBoundary` → PNG.
+- `services/image_processing_service.dart` — crop / rotate / flood-fill /
+  bake erasures. **Platform-split** via conditional import: the default
+  impl drives `ui.Canvas` + the engine PNG encoder; the web sibling uses
+  `HTMLCanvasElement.toBlob` because CanvasKit's `toByteData(png)` is
+  sync-on-main despite returning a Future.
+- `services/template_service.dart` — loads `assets/templates/*.json`,
+  builds the checkered placeholder PNG for empty image slots.
+- `services/ai/ai_settings.dart` — token + consent in `flutter_secure_storage`.
+- `services/ai/huggingface_ai_service.dart` — HF Inference client (default
+  `briaai/RMBG-1.4` + `stabilityai/stable-diffusion-2-inpainting`); 503
+  cold-start retry; typed `AiException`.
+- `services/social/` — `SocialPoster` interface; `ShareSheetPoster` (default).
+  `DirectApiPoster` is a Phase-3 stub.
+- `services/platform_saver_{default,web}.dart` — conditional-import save.
 
 ## Conventions
 
-- All layer geometry (`position`, `size`, `tailTarget`) is FRACTIONAL (0..1
-  of the canvas) so it maps identically to the upscaled export at any size.
-- Text `fontSize` is fractional too — it's multiplied by the canvas height.
-- Z-order is `layers[0]` = bottom; the layers panel reverses for display
+- All layer geometry (`position`, `size`, `tailTarget`) is **fractional**
+  (0..1 of canvas). Text `fontSize` is fractional too. Maps identically to
+  any export size.
+- Z-order: `layers[0]` = bottom. Layers panel reverses for display
   (Photoshop-style top-of-list = top-of-stack).
-- Background layer is structural: the controller refuses to delete it or
-  reorder anything below it. `BackgroundLayer.copyWithBase` ignores
-  geometric edits — it's always full-bleed.
-- Use `Color.withValues(alpha: x)` (not the deprecated `withOpacity`) and
-  `Color.toARGB32()` (not the deprecated `Color.value`). Flutter floor is
-  3.27 — both APIs are available.
-- Platform code stays behind conditional imports (`if (dart.library.html)`);
+- Background layer is structural: controller refuses to delete it or
+  reorder anything below it; `BackgroundLayer.copyWithBase` ignores
+  geometric edits (always full-bleed).
+- Templates never embed binary image data — they declare slots the user
+  fills at instantiation. Keeps JSON small, copyright-clean, diffable.
+- Use `Color.withValues(alpha: x)` (not `withOpacity`) and
+  `Color.toARGB32()` (not `Color.value`). Flutter floor is 3.27.
+- Platform code behind conditional imports (`if (dart.library.html)`);
   never import `dart:io` or `dart:html` in shared code.
 - Posters must NOT throw — return a `PostResult`.
 - Prefer relative imports inside `lib/`; `package:memer/...` only in tests.
 
-## Roadmap
-
-- **Phase 1 (shipped).** Layer engine, all 5 layer kinds, canvas +
-  interactive overlay, layers + inspector panels, OS share sheet posting,
-  PNG save/export.
-- **Phase 2 (shipped).** Image tools (`ImageEditorScreen`): crop with a
-  draggable rect + 4 corner handles, 90° rotations (CW / CCW / 180°), and
-  a manual background-removal painter (brush + magic-wand). Wand uses
-  `ImageProcessingService.floodFill` (BFS, 4-connected, RGB tolerance);
-  brush strokes accumulate as `Path`s in image-pixel coordinates and are
-  baked into a transparent PNG via `applyErasures` (drawn with
-  `BlendMode.dstOut` so the underlying image pixels become transparent).
-  Free rotation at arbitrary angles continues to live on the canvas via
-  the rotate handle — image-editor rotation is just the 90° quick path.
-- **Phase 3.** BYO-credentials social posting — `flutter_secure_storage` for
-  accounts/tokens, `flutter_web_auth_2` for OAuth, settings screen with a
-  "paste your client ID" field per network. X gets a full implementation;
-  Meta networks (IG, FB, Threads, LinkedIn) are scaffolded — they need a
-  business-reviewed app, which the user must register themselves.
-
 ## Guardrails
 
-- No backend, no embedded API keys/secrets (Phase 1 + 2). Phase 3 stores
-  user-supplied OAuth tokens in `flutter_secure_storage` only.
+- No backend. No embedded API keys/secrets, ever.
+- AI feature is **BYO Hugging Face token** — stored in
+  `flutter_secure_storage`, gated on explicit consent. Nothing leaves the
+  device unless both are set. Phase-3 social posting follows the same
+  BYO-credentials pattern.
 - Keep it cross-platform: nothing that only builds on one target.
+
+## Roadmap
+
+- **Phase 1 (shipped).** Layer engine, 5 layer kinds, canvas + overlay,
+  layers + inspector panels, share sheet, PNG export.
+- **Phase 2 (shipped).** Image editor: crop, 90° rotate, manual
+  background-removal painter (brush + magic-wand flood fill).
+- **Templates (shipped).** Bundled `assets/templates/*.json` — classic meme
+  layouts + greetings cards; gallery + wizard hand off to editor.
+- **AI mode (shipped, opt-in).** BYO HF token; image-editor AI tab adds
+  one-shot background removal and prompt-free object inpainting.
+- **Phase 3.** BYO-credentials social posting — `flutter_web_auth_2` OAuth,
+  per-network "paste your client ID" settings, parallel share-screen
+  posting. X first; Meta networks (IG / FB / Threads / LinkedIn) scaffolded.
